@@ -1,0 +1,22 @@
+# Node
+node_modules/
+dist/
+.npm/
+.eslintcache
+
+# UI5
+.ui5-tooling-cache/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Playwright
+.playwright-cli/

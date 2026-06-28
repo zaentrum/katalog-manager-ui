@@ -1,0 +1,109 @@
+<!-- Dialog rendered by DiagnosticsActions.viewJson. Two IconTabBar tabs:
+     "ffprobe" and "Folder listing". Each tab renders its JSON through a
+     CodeEditor (read-only, json mode) so the operator gets syntax
+     highlighting + line numbers + copy support out of the box.
+
+     Bound to a JSONModel under the "dx" namespace populated by the
+     controller — keeps the ItemDiagnostics OData blob out of the
+     global model. -->
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    xmlns:layout="sap.ui.layout"
+    xmlns:editor="sap.ui.codeeditor">
+  <Dialog
+      title="Diagnostics — {dx>/sourcePath}"
+      contentWidth="90%"
+      contentHeight="80%"
+      resizable="true"
+      draggable="true"
+      stretchOnPhone="true">
+    <content>
+      <IconTabBar
+          id="diagnosticsTabBar"
+          applyContentPadding="false"
+          expandable="false">
+        <items>
+          <IconTabFilter
+              key="ffprobe"
+              icon="sap-icon://camera"
+              text="ffprobe">
+            <Toolbar design="Transparent">
+              <ToolbarSpacer/>
+              <Button
+                  icon="sap-icon://copy"
+                  text="Copy"
+                  press=".onCopyFfprobe"
+                  type="Transparent"/>
+            </Toolbar>
+            <!-- Fixed viewport-relative height. The dialog itself is
+                 contentHeight="80%" so 60vh slots in beneath the tab
+                 strip + toolbar without overflow on common screens. -->
+            <editor:CodeEditor
+                type="json"
+                height="60vh"
+                width="100%"
+                editable="false"
+                syntaxHints="false"
+                value="{dx>/ffprobeData}"
+                colorTheme="default"/>
+          </IconTabFilter>
+
+          <IconTabFilter
+              key="folder"
+              icon="sap-icon://folder-blank"
+              text="Folder listing">
+            <Toolbar design="Transparent">
+              <Label text="Source: {dx>/sourcePath}"/>
+              <ToolbarSpacer/>
+              <Button
+                  icon="sap-icon://copy"
+                  text="Copy"
+                  press=".onCopyFolder"
+                  type="Transparent"/>
+            </Toolbar>
+            <editor:CodeEditor
+                type="json"
+                height="60vh"
+                width="100%"
+                editable="false"
+                syntaxHints="false"
+                value="{dx>/folderListing}"
+                colorTheme="default"/>
+          </IconTabFilter>
+
+          <IconTabFilter
+              key="header"
+              icon="sap-icon://hint"
+              text="Header">
+            <layout:VerticalLayout width="100%" class="sapUiContentPadding">
+              <HBox>
+                <Label text="Captured at:" class="sapUiTinyMarginEnd"/>
+                <Text text="{dx>/generatedAt}"/>
+              </HBox>
+              <HBox>
+                <Label text="Source path:" class="sapUiTinyMarginEnd"/>
+                <Text text="{dx>/sourcePath}"/>
+              </HBox>
+              <HBox>
+                <Label text="Source size (B):" class="sapUiTinyMarginEnd"/>
+                <Text text="{dx>/sourceSize}"/>
+              </HBox>
+              <HBox>
+                <Label text="Source mtime:" class="sapUiTinyMarginEnd"/>
+                <Text text="{dx>/sourceMtime}"/>
+              </HBox>
+              <HBox>
+                <Label text="Notes:" class="sapUiTinyMarginEnd"/>
+                <Text text="{dx>/notes}"/>
+              </HBox>
+            </layout:VerticalLayout>
+          </IconTabFilter>
+        </items>
+      </IconTabBar>
+    </content>
+    <beginButton>
+      <Button text="Close" press=".onClose"/>
+    </beginButton>
+  </Dialog>
+</core:FragmentDefinition>

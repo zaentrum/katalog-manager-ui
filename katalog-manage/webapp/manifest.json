@@ -1,0 +1,709 @@
+{
+  "_version": "1.28.0",
+  "sap.app": {
+    "id": "com.nalet.katalog",
+    "type": "application",
+    "applicationVersion": {
+      "version": "0.2.2"
+    },
+    "i18n": "i18n/i18n.properties",
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "dataSources": {
+      "KatalogService": {
+        "uri": "/katalog-api/odata/v4/katalog-admin/",
+        "type": "OData",
+        "settings": {
+          "odataVersion": "4.0"
+        }
+      }
+    },
+    "crossNavigation": {
+      "inbounds": {
+        "Movies-list": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Movies",
+          "action": "list",
+          "title": "Movies",
+          "subTitle": "Browse the movie library"
+        },
+        "Series-list": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Series",
+          "action": "list",
+          "title": "Shows",
+          "subTitle": "Browse the TV series library"
+        },
+        "Music-list": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Music",
+          "action": "list",
+          "title": "Music",
+          "subTitle": "Browse the music library"
+        },
+        "Katalog-items": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Katalog",
+          "action": "items",
+          "title": "All items",
+          "subTitle": "Unified catalog (all types)"
+        },
+        "Katalog-scans": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Katalog",
+          "action": "scans",
+          "title": "Scan jobs",
+          "subTitle": "Library scan history"
+        },
+        "Katalog-processing": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Katalog",
+          "action": "processing",
+          "title": "Processing",
+          "subTitle": "Pipeline step status across the catalog"
+        },
+        "Katalog-settings": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Katalog",
+          "action": "settings",
+          "title": "Settings",
+          "subTitle": "Packager language whitelist + Validate thresholds"
+        },
+        "Downloads-manage": {
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          },
+          "semanticObject": "Downloads",
+          "action": "manage",
+          "title": "Downloads",
+          "subTitle": "Active downloads & queue",
+          "icon": "sap-icon://download"
+        }
+      }
+    }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
+  },
+  "sap.ui5": {
+    "componentName": "com.nalet.katalog",
+    "flexEnabled": false,
+    "dependencies": {
+      "minUI5Version": "1.144.0",
+      "libs": {
+        "sap.fe.templates": {},
+        "sap.ui.codeeditor": {},
+        "sap.ui.layout": {},
+        "sap.m": {},
+        "sap.ui.core": {}
+      }
+    },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
+    "resources": {
+      "css": [
+        {
+          "uri": "css/style.css"
+        }
+      ]
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "com.nalet.katalog.i18n.i18n"
+        }
+      },
+      "": {
+        "dataSource": "KatalogService",
+        "settings": {
+          "synchronizationMode": "None",
+          "operationMode": "Server",
+          "autoExpandSelect": true,
+          "earlyRequests": true,
+          "groupId": "$direct"
+        }
+      }
+    },
+    "routing": {
+      "routes": [
+        {
+          "pattern": ":?query:",
+          "name": "MoviesList",
+          "target": "MoviesList"
+        },
+        {
+          "pattern": "Movies({key}):?query:",
+          "name": "MoviesDetails",
+          "target": "MoviesDetails"
+        },
+        {
+          "pattern": "Series:?query:",
+          "name": "SeriesList",
+          "target": "SeriesList"
+        },
+        {
+          "pattern": "Series({key}):?query:",
+          "name": "SeriesDetails",
+          "target": "SeriesDetails"
+        },
+        {
+          "pattern": "Episodes({key}):?query:",
+          "name": "EpisodesDetails",
+          "target": "EpisodesDetails"
+        },
+        {
+          "pattern": "Series({sid})/children({key}):?query:",
+          "name": "EpisodesDetailsFromSeries",
+          "target": "EpisodesDetails"
+        },
+        {
+          "pattern": "Albums:?query:",
+          "name": "AlbumsList",
+          "target": "AlbumsList"
+        },
+        {
+          "pattern": "Albums({key}):?query:",
+          "name": "AlbumsDetails",
+          "target": "AlbumsDetails"
+        },
+        {
+          "pattern": "Items:?query:",
+          "name": "ItemsList",
+          "target": "ItemsList"
+        },
+        {
+          "pattern": "Items({key}):?query:",
+          "name": "ItemsDetails",
+          "target": "ItemsDetails"
+        },
+        {
+          "pattern": "ScanJobs:?query:",
+          "name": "ScanJobsList",
+          "target": "ScanJobsList"
+        },
+        {
+          "pattern": "ScanJobs({key}):?query:",
+          "name": "ScanJobsDetails",
+          "target": "ScanJobsDetails"
+        },
+        {
+          "pattern": "ItemProcessingSteps:?query:",
+          "name": "ProcessingList",
+          "target": "ProcessingList"
+        },
+        {
+          "pattern": "ItemProcessingSteps({key}):?query:",
+          "name": "ProcessingDetails",
+          "target": "ProcessingDetails"
+        },
+        {
+          "pattern": "Settings:?query:",
+          "name": "SettingsList",
+          "target": "SettingsList"
+        },
+        {
+          "pattern": "Settings({key}):?query:",
+          "name": "SettingsDetails",
+          "target": "SettingsDetails"
+        },
+        {
+          "pattern": "DownloadJobs:?query:",
+          "name": "DownloadJobsList",
+          "target": "DownloadJobsList"
+        },
+        {
+          "pattern": "DownloadJobs({key}):?query:",
+          "name": "DownloadJobsDetails",
+          "target": "DownloadJobsDetails"
+        }
+      ],
+      "targets": {
+        "MoviesList": {
+          "type": "Component",
+          "id": "MoviesList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "Movies",
+              "liveMode": true,
+              "navigation": {
+                "Movies": {
+                  "detail": {
+                    "route": "MoviesDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "MoviesDetails": {
+          "type": "Component",
+          "id": "MoviesDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "Movies",
+              "content": {
+                "header": {
+                  "actions": {
+                    "EnqueuePackaging": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.enqueuePackaging",
+                      "text": "Migrate / Package",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "ValidateItem": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.validateItem",
+                      "text": "Validate",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "RefreshTmdb": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.refreshTmdb",
+                      "text": "Refresh from TMDB",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "FetchTrailers": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.fetchTrailers",
+                      "text": "Download Trailer",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                },
+                "body": {
+                  "sections": {
+                    "SegmentTimelineSection": {
+                      "template": "com.nalet.katalog.ext.fragment.SegmentTimeline",
+                      "title": "Timeline",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "Segments"
+                      }
+                    }
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "diagnostics/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "actions": {
+                    "ViewJson": {
+                      "press": "com.nalet.katalog.ext.controller.DiagnosticsActions.viewJson",
+                      "text": "View JSON",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "SeriesList": {
+          "type": "Component",
+          "id": "SeriesList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "Series",
+              "liveMode": true,
+              "navigation": {
+                "Series": {
+                  "detail": {
+                    "route": "SeriesDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "SeriesDetails": {
+          "type": "Component",
+          "id": "SeriesDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "Series",
+              "navigation": {
+                "children": {
+                  "detail": {
+                    "route": "EpisodesDetails"
+                  }
+                }
+              },
+              "content": {
+                "header": {
+                  "actions": {
+                    "EnqueuePackaging": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.enqueuePackaging",
+                      "text": "Migrate / Package All Episodes",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "ValidateItem": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.validateItem",
+                      "text": "Validate",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "RefreshTmdb": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.refreshTmdb",
+                      "text": "Refresh from TMDB",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "FetchTrailers": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.fetchTrailers",
+                      "text": "Download Trailer",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                },
+                "body": {
+                  "sections": {}
+                }
+              },
+              "controlConfiguration": {
+                "children/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "growingThreshold": 100,
+                    "growingMode": "More"
+                  },
+                  "columns": {
+                    "TimelineColumn": {
+                      "header": "Timeline",
+                      "width": "16em",
+                      "template": "com.nalet.katalog.ext.fragment.EpisodeTimelineCell",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "DataField::hasRecap"
+                      }
+                    }
+                  },
+                  "binding": {
+                    "parameters": {
+                      "$expand": {
+                        "segments": {
+                          "$select": [
+                            "kind",
+                            "startMs",
+                            "endMs",
+                            "source"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "diagnostics/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "actions": {
+                    "ViewJson": {
+                      "press": "com.nalet.katalog.ext.controller.DiagnosticsActions.viewJson",
+                      "text": "View JSON",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "EpisodesDetails": {
+          "type": "Component",
+          "id": "EpisodesDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "Episodes",
+              "contextPath": "/Episodes",
+              "content": {
+                "header": {
+                  "actions": {
+                    "EnqueuePackaging": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.enqueuePackaging",
+                      "text": "Migrate / Package",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "ValidateItem": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.validateItem",
+                      "text": "Validate",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "RefreshTmdb": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.refreshTmdb",
+                      "text": "Refresh from TMDB",
+                      "visible": true,
+                      "enabled": true
+                    },
+                    "FetchTrailers": {
+                      "press": "com.nalet.katalog.ext.controller.ObjectPageActions.fetchTrailers",
+                      "text": "Download Trailer",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                },
+                "body": {
+                  "sections": {
+                    "SegmentTimelineSection": {
+                      "template": "com.nalet.katalog.ext.fragment.SegmentTimeline",
+                      "title": "Timeline",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "About"
+                      }
+                    }
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "diagnostics/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "actions": {
+                    "ViewJson": {
+                      "press": "com.nalet.katalog.ext.controller.DiagnosticsActions.viewJson",
+                      "text": "View JSON",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "AlbumsList": {
+          "type": "Component",
+          "id": "AlbumsList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "Albums",
+              "liveMode": true,
+              "navigation": {
+                "Albums": {
+                  "detail": {
+                    "route": "AlbumsDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "AlbumsDetails": {
+          "type": "Component",
+          "id": "AlbumsDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "Albums"
+            }
+          }
+        },
+        "ItemsList": {
+          "type": "Component",
+          "id": "ItemsList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "Items",
+              "liveMode": true,
+              "navigation": {
+                "Items": {
+                  "detail": {
+                    "route": "ItemsDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "ItemsDetails": {
+          "type": "Component",
+          "id": "ItemsDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "Items"
+            }
+          }
+        },
+        "ScanJobsList": {
+          "type": "Component",
+          "id": "ScanJobsList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "ScanJobs",
+              "liveMode": true,
+              "navigation": {
+                "ScanJobs": {
+                  "detail": {
+                    "route": "ScanJobsDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "ScanJobsDetails": {
+          "type": "Component",
+          "id": "ScanJobsDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "ScanJobs"
+            }
+          }
+        },
+        "ProcessingList": {
+          "type": "Component",
+          "id": "ProcessingList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "ItemProcessingSteps",
+              "liveMode": true,
+              "navigation": {
+                "ItemProcessingSteps": {
+                  "detail": {
+                    "route": "ProcessingDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "ProcessingDetails": {
+          "type": "Component",
+          "id": "ProcessingDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "ItemProcessingSteps"
+            }
+          }
+        },
+        "SettingsList": {
+          "type": "Component",
+          "id": "SettingsList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "Settings",
+              "liveMode": true,
+              "navigation": {
+                "Settings": {
+                  "detail": {
+                    "route": "SettingsDetails"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "SettingsDetails": {
+          "type": "Component",
+          "id": "SettingsDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "Settings"
+            }
+          }
+        },
+        "DownloadJobsList": {
+          "type": "Component",
+          "id": "DownloadJobsList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "entitySet": "DownloadJobs",
+              "liveMode": true,
+              "navigation": {
+                "DownloadJobs": {
+                  "detail": {
+                    "route": "DownloadJobsDetails"
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "actions": {
+                    "NewDownload": {
+                      "press": "com.nalet.katalog.ext.controller.DownloadActions.newDownload",
+                      "text": "New Download",
+                      "enabled": true,
+                      "visible": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "DownloadJobsDetails": {
+          "type": "Component",
+          "id": "DownloadJobsDetails",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "entitySet": "DownloadJobs",
+              "content": {
+                "header": {
+                  "actions": {
+                    "CancelDownload": {
+                      "press": "com.nalet.katalog.ext.controller.DownloadActions.cancelDownload",
+                      "text": "Cancel Download",
+                      "visible": true,
+                      "enabled": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "sap.fiori": {
+    "registrationIds": [],
+    "archeType": "transactional"
+  }
+}
