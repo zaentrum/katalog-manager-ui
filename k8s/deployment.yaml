@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: katalog-manager-ui
+  namespace: stube
+  labels:
+    app: katalog-manager-ui
+    value-stream: stube
+    component: catalog
+    plane: ui
+spec:
+  # Single operator SPA. Static nginx is stateless and tiny — 1 replica
+  # is fine; an HPA could go to 2 trivially if the launchpad ever gets
+  # bursty.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: katalog-manager-ui
+  template:
+    metadata:
+      labels:
+        app: katalog-manager-ui
+        value-stream: stube
+        component: catalog
+    spec:
+      serviceAccountName: katalog-manager-ui
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: katalog-manager-ui
+          image: zaentrum/katalog-manager-ui:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi

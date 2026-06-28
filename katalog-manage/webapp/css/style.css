@@ -1,0 +1,50 @@
+/* SegmentBar: the proportional stacked timeline rendered on Movies /
+   Series object pages. Each child div has flex-grow set to its
+   duration in ms, so the bar self-balances regardless of total
+   runtime. */
+.kg-segment-bar {
+  display: flex;
+  width: 100%;
+  height: 2.25rem;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+/* Compact variant used in table cells (Series → Episodes column) so
+   the bar fits in the standard row height without inflating it. */
+.sapMListTblCell .kg-segment-bar,
+.sapUiTableCell  .kg-segment-bar {
+  height: 1.25rem;
+  border-radius: 3px;
+}
+.kg-segment-block {
+  min-width: 2px;
+  cursor: default;
+  transition: opacity 0.15s ease-in-out;
+}
+.kg-segment-block:hover {
+  opacity: 0.85;
+}
+
+/* Legend — small colour swatches under the bar matching the SegmentBar
+   palette (and the Grafana dashboard). */
+.kg-segment-legend {
+  font-size: 0.85rem;
+  gap: 1.25rem;
+}
+.kg-segment-legend .kg-legend-item {
+  align-items: center;
+  gap: 0.4rem;
+}
+.kg-segment-legend .kg-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  margin-right: 0.25rem;
+}
+.kg-swatch-intro   { background: #a371f7; }
+.kg-swatch-recap   { background: #7ee787; }
+.kg-swatch-credits { background: #fb8500; }
+.kg-swatch-preview { background: #79c0ff; }
+.kg-swatch-scene   { background: #1f6feb; }
