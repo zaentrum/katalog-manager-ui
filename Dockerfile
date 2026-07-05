@@ -1,39 +1,30 @@
-# Base-image registry prefix. Empty default = public Docker Hub; a private
-# deploy mirror passes --build-arg BASE=registry.example/library/ .
+# Base-image registry prefix. Empty default = public Docker Hub (anyone can build).
+# A private deploy mirror passes e.g. --build-arg BASE=registry.example/library/ .
 ARG BASE=
-# katalog-manager-ui — UI5 Fiori Elements SPA served by nginx.
-#
-# Two-stage build. There's no API here — OData calls go through the
-# launchpad proxy (api_path_prefix=katalog-api in console_external_apps)
-# to the sibling katalog-manager-api service.
-#
-# Stage 1: ui5-cli build → static dist/ directory.
-# Stage 2: nginx alpine serving the dist, listening on 8080 so the
-# default OpenShift random-UID + GID 0 pod can bind it.
-FROM ${BASE}node:20-alpine AS ui-build
-WORKDIR /build
 
-# Cache npm deps independently of the source tree so a UI source edit
-# doesn't blow the node_modules layer away.
-COPY katalog-manage/package.json katalog-manage/package-lock.json* ./katalog-manage/
-RUN cd katalog-manage && (npm ci || npm install --no-audit --no-fund)
+# build the SPA (vendored @nalet/design-system tarball is in ./vendor)
+FROM ${BASE}node:20-alpine AS build
+WORKDIR /src
+COPY package.json package-lock.json* ./
+COPY vendor ./vendor
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+COPY . .
+# Builds with a `/__BASE__/` placeholder base (see vite.config.ts). The runtime
+# entrypoint rewrites it to the real BASE_PATH, so ONE image mounts at any path.
+RUN npm run build
 
-COPY katalog-manage ./katalog-manage
-# `ui5 build --dest dist` emits the production-mode bundle: ES6
-# transpiled, CSS minified, version-stamped resource URLs.
-RUN cd katalog-manage && npm run build
-
-# Stage 2: nginx runtime.
 FROM ${BASE}nginxinc/nginx-unprivileged:1.27-alpine
-# The nginxinc/nginx-unprivileged image already runs as uid 101 and
-# listens on 8080 by default — matches OpenShift's random-UID security
-# model without needing a custom user/chown dance.
-
-COPY --from=ui-build /build/katalog-manage/dist /usr/share/nginx/html
-
-# Hand-rolled nginx config: SPA fallback to /index.html, gzip on,
-# cache-control headers for the long-lived `resources/` paths the
-# UI5 build emits.
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
+USER root
+# Stage the built SPA under /app; the entrypoint copies it into the html root
+# under BASE_PATH and rewrites the placeholder at container start.
+COPY --from=build /src/dist /app
+COPY docker-entrypoint.d/40-katalog-base.sh /docker-entrypoint.d/40-katalog-base.sh
+RUN chmod +x /docker-entrypoint.d/40-katalog-base.sh \
+  && chown -R 101:0 /usr/share/nginx/html /etc/nginx/conf.d /app \
+  && chmod -R g+w /usr/share/nginx/html /etc/nginx/conf.d
+USER 101
+ENV BASE_PATH=/katalog/
 EXPOSE 8080
+LABEL org.opencontainers.image.source="https://github.com/zaentrum/katalog-manager-ui"
+LABEL org.opencontainers.image.title="katalog-manager-ui"
+LABEL org.opencontainers.image.description="Standalone catalog-management console (GraphQL) for the zaentrum platform"
