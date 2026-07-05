@@ -10,7 +10,7 @@ const env = import.meta.env;
 // fresh redirect. The issuer is adopted from GET /api/config at runtime so one
 // build works against any Keycloak; the client id is always the portal's.
 export let authority: string =
-  env.VITE_OIDC_AUTHORITY ?? 'https://zaentrum.demo.nalet.cloud/auth/realms/stube';
+  env.VITE_OIDC_AUTHORITY ?? 'https://zaentrum.demo.nalet.cloud/auth/realms/zaentrum';
 export const clientId: string = env.VITE_OIDC_CLIENT_ID ?? 'zaentrum-web';
 
 function buildConfig(): AuthProviderProps {
