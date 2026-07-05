@@ -1,48 +1,43 @@
 # katalog-manager-ui
 
-UI5 Fiori Elements app for the zaentrum catalog admin surface. Talks to
-`katalog-manager-api` via OData v4. Designed to be hosted as a tile inside
-a Fiori launchpad (FLP) shell.
+Standalone **catalog-management console** for the zaentrum platform — the admin UI
+that talks to [`katalog-manager`](https://github.com/zaentrum/katalog-manager) over
+GraphQL. Catalog, scan, downloads and settings, built on `@nalet/design-system`.
 
-## Status
+It is a service in its own right so it can be released independently of the
+catalog **API**. It is launched from the [zaentrum portal](https://github.com/zaentrum/zaentrum-portal)
+launchpad (the `katalog` app tiles) and rides the portal's SSO session — same
+public OIDC client (`zaentrum-web`), same origin — so it usually loads already
+signed-in.
 
-Scaffold. The catalog read/write split puts this UI on the admin-side
-surface — it talks to `katalog-manager-api`, never directly to the
-read-path catalog service.
+## Runtime-configurable mount path
 
-## Layout
+The image is built once with a `/__BASE__/` placeholder base. The container
+entrypoint (`docker-entrypoint.d/40-katalog-base.sh`) rewrites it to `BASE_PATH`
+at start, so one image mounts at any URL path:
 
-```
-katalog-manage/                 # the UI5 / Fiori Elements application
-  webapp/                       # Component, manifest, custom controls + actions
-  ui5.yaml                      # UI5 tooling config (TypeScript transpile)
-console-app/                    # launchpad registration (manifest + seed SQL)
-k8s/                            # Deployment, Service, ServiceAccount
-Dockerfile                      # ui5 build -> nginx static runtime
-nginx.conf                      # SPA fallback + caching for the static bundle
-```
+| `BASE_PATH`   | serves at        |
+|---------------|------------------|
+| `/katalog/`   | demo path-route (default) |
+| `/`           | site root (standalone)    |
 
-## Local development
+The OIDC issuer + web client id are read at runtime from `GET /api/config` (with
+a build-time fallback), so the same published image works against any Keycloak.
 
-```bash
-cd katalog-manage
-npm ci
-npm run start
-```
+## Develop
 
-The OData base path is `/proxy/katalog-manager-ui/odata/v4/katalog-admin/`
-(routed by the launchpad upstream registration in `console-app/seed.sql`).
-
-## Build the container
-
-```bash
-docker build -t zaentrum/katalog-manager-ui .
+```sh
+npm install          # vendored @nalet/design-system tarball in ./vendor
+npm run dev          # proxies /api → http://localhost:8080 (a running katalog-manager)
+npm run build        # tsc -b && vite build
 ```
 
-The `k8s/` manifests are samples — adjust the namespace, image reference,
-and pull secrets for your environment, build and push the image to your own
-registry, then apply them.
+## Container
 
-## License
+```sh
+docker build -t katalog-manager-ui .
+docker run -e BASE_PATH=/katalog/ -p 8080:8080 katalog-manager-ui
+```
 
-[MPL-2.0](LICENSE).
+GitHub Actions publishes `ghcr.io/zaentrum/katalog-manager-ui:latest` on push to
+`main`.
