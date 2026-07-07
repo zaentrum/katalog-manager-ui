@@ -8,7 +8,6 @@ import { KatalogLayout } from './katalog/KatalogLayout';
 import { CatalogList } from './katalog/CatalogList';
 import { ItemDetail } from './katalog/ItemDetail';
 import { ScanView } from './katalog/ScanView';
-import { DownloadsView } from './katalog/DownloadsView';
 import { SettingsView } from './katalog/SettingsView';
 import { Splash } from './Splash';
 import './shell.css';
@@ -59,7 +58,6 @@ export function App() {
             <Route index element={<CatalogList />} />
             <Route path="item/:id" element={<ItemDetail />} />
             <Route path="scan" element={<ScanView />} />
-            <Route path="downloads" element={<DownloadsView />} />
             <Route path="settings" element={<SettingsView />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
