@@ -8,19 +8,17 @@ import './katalog.css';
 const SECTIONS = [
   { value: 'catalog', label: 'catalog', path: '/' },
   { value: 'scan', label: 'scan', path: '/scan' },
-  { value: 'downloads', label: 'downloads', path: '/downloads' },
   { value: 'settings', label: 'settings', path: '/settings' },
 ];
 
 function sectionFor(pathname: string): string {
   if (pathname.startsWith('/scan')) return 'scan';
-  if (pathname.startsWith('/downloads')) return 'downloads';
   if (pathname.startsWith('/settings')) return 'settings';
   return 'catalog';
 }
 
-// The katalog console. Its own section nav (catalog / scan / downloads /
-// settings) drives a nested route outlet.
+// The katalog console. Its own section nav (catalog / scan / settings) drives a
+// nested route outlet.
 export function KatalogLayout() {
   const nav = useNavigate();
   const loc = useLocation();
