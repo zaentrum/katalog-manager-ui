@@ -7,11 +7,13 @@ import './katalog.css';
 //   • Catalog Management: operations — scan + settings tabs.
 const MANAGE_SECTIONS = [
   { value: 'scan', label: 'scan', path: '/scan' },
+  { value: 'activity', label: 'activity', path: '/activity' },
   { value: 'settings', label: 'settings', path: '/settings' },
 ];
 
 function manageSectionFor(pathname: string): string {
   if (pathname.startsWith('/settings')) return 'settings';
+  if (pathname.startsWith('/activity')) return 'activity';
   return 'scan';
 }
 

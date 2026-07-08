@@ -112,6 +112,61 @@
   font-size: 13px;
   padding: 8px 0;
 }
+
+/* activity timeline (friendly view) */
+.kat__timeline {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kat__event {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border, #1c2431);
+}
+.kat__event:last-child {
+  border-bottom: none;
+}
+.kat__event-dot {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim, #8b95a7);
+  background: var(--surface, #11161f);
+  border: 1px solid var(--border, #1c2431);
+}
+.kat__dot--green {
+  color: var(--green, #2ea043);
+  border-color: color-mix(in srgb, var(--green, #2ea043) 40%, transparent);
+}
+.kat__dot--blue {
+  color: var(--cloud-blue, #58a6ff);
+  border-color: color-mix(in srgb, var(--cloud-blue, #58a6ff) 40%, transparent);
+}
+.kat__dot--amber {
+  color: var(--amber, #f2b233);
+  border-color: color-mix(in srgb, var(--amber, #f2b233) 40%, transparent);
+}
+.kat__event-body {
+  flex: 1;
+  min-width: 0;
+}
+.kat__event-line {
+  font-size: 14px;
+}
+.kat__event-sub {
+  font-size: 12px;
+  margin-top: 2px;
+}
 .kat__ok {
   color: var(--green, #2ea043);
   font-size: 13px;
