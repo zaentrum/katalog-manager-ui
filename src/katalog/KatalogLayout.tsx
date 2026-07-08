@@ -2,44 +2,45 @@ import { Tabs, Heading } from '@nalet/design-system';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import './katalog.css';
 
-// Standalone app: routes are relative to the router basename (/katalog), so the
-// section paths are app-root-relative ('/', '/scan', …) — react-router prepends
-// the base.
-const SECTIONS = [
-  { value: 'catalog', label: 'catalog', path: '/' },
+// Two separate apps share this shell, selected by the mount path (BASE):
+//   • Catalog (browse): the item list + item detail — no section tabs.
+//   • Catalog Management: operations — scan + settings tabs.
+const MANAGE_SECTIONS = [
   { value: 'scan', label: 'scan', path: '/scan' },
   { value: 'settings', label: 'settings', path: '/settings' },
 ];
 
-function sectionFor(pathname: string): string {
-  if (pathname.startsWith('/scan')) return 'scan';
+function manageSectionFor(pathname: string): string {
   if (pathname.startsWith('/settings')) return 'settings';
-  return 'catalog';
+  return 'scan';
 }
 
-// The katalog console. Its own section nav (catalog / scan / settings) drives a
-// nested route outlet.
-export function KatalogLayout() {
+export function KatalogLayout({ mode }: { mode: 'catalog' | 'manage' }) {
   const nav = useNavigate();
   const loc = useLocation();
-  const active = sectionFor(loc.pathname);
+  const manage = mode === 'manage';
+  const active = manageSectionFor(loc.pathname);
 
   return (
     <div className="kat">
       <div className="kat__head">
         <Heading level={1} chevron>
-          katalog
+          {manage ? 'catalog management' : 'katalog'}
         </Heading>
-        <span className="kat__sub">catalog management console</span>
+        <span className="kat__sub">
+          {manage ? 'scan & settings' : 'browse the catalog'}
+        </span>
       </div>
-      <Tabs
-        items={SECTIONS.map((s) => ({ value: s.value, label: s.label }))}
-        value={active}
-        onChange={(v) => {
-          const s = SECTIONS.find((x) => x.value === v);
-          if (s) nav(s.path);
-        }}
-      />
+      {manage && (
+        <Tabs
+          items={MANAGE_SECTIONS.map((s) => ({ value: s.value, label: s.label }))}
+          value={active}
+          onChange={(v) => {
+            const s = MANAGE_SECTIONS.find((x) => x.value === v);
+            if (s) nav(s.path);
+          }}
+        />
+      )}
       <div className="kat__body">
         <Outlet />
       </div>

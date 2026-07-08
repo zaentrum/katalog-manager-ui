@@ -9,8 +9,16 @@ import { CatalogList } from './katalog/CatalogList';
 import { ItemDetail } from './katalog/ItemDetail';
 import { ScanView } from './katalog/ScanView';
 import { SettingsView } from './katalog/SettingsView';
+import { BASE_NOSLASH } from './lib/basepath';
 import { Splash } from './Splash';
 import './shell.css';
+
+// This one image is deployed twice — mounted at /katalog (Catalog: browse) and
+// /katalog-manage (Catalog Management: scan + settings). The mount path selects
+// which app renders: two genuine apps from one build.
+const MODE: 'catalog' | 'manage' = BASE_NOSLASH.toLowerCase().includes('manage')
+  ? 'manage'
+  : 'catalog';
 
 // The katalog console: a standalone app launched from the zaentrum portal. It
 // rides the portal's SSO session (same OIDC client), so it usually loads already
@@ -36,7 +44,7 @@ export function App() {
       <header className="sh__bar">
         <a className="sh__brand" href="/portal/" aria-label="zaentrum launchpad">
           <ZaentrumLockup height={24} />
-          <span className="sh__crumb">/ katalog</span>
+          <span className="sh__crumb">/ {MODE === 'manage' ? 'catalog management' : 'katalog'}</span>
         </a>
         <div className="sh__bar-right">
           <Badge tone="blue" dot>
@@ -54,11 +62,19 @@ export function App() {
       </header>
       <main className="sh__main">
         <Routes>
-          <Route element={<KatalogLayout />}>
-            <Route index element={<CatalogList />} />
-            <Route path="item/:id" element={<ItemDetail />} />
-            <Route path="scan" element={<ScanView />} />
-            <Route path="settings" element={<SettingsView />} />
+          <Route element={<KatalogLayout mode={MODE} />}>
+            {MODE === 'manage' ? (
+              <>
+                <Route index element={<ScanView />} />
+                <Route path="scan" element={<ScanView />} />
+                <Route path="settings" element={<SettingsView />} />
+              </>
+            ) : (
+              <>
+                <Route index element={<CatalogList />} />
+                <Route path="item/:id" element={<ItemDetail />} />
+              </>
+            )}
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
