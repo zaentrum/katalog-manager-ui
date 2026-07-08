@@ -8,9 +8,12 @@ import {
   Tabs,
   Spinner,
   Divider,
+  Modal,
+  Field,
+  Input,
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { ArrowLeft, Sparkles, Package, CheckCircle2, Film } from 'lucide-react';
+import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
@@ -110,6 +113,9 @@ export function ItemDetail() {
   const [tab, setTab] = useState('overview');
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [identifyOpen, setIdentifyOpen] = useState(false);
+  const [idTitle, setIdTitle] = useState('');
+  const [idTmdb, setIdTmdb] = useState('');
 
   const item = data?.item;
 
@@ -119,6 +125,26 @@ export function ItemDetail() {
     try {
       const d = await gql<Record<string, unknown>>(mutation, { id });
       setMsg(pick(d));
+      refetch();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Manual match: re-search TMDB with a corrected title and/or pin a TMDB id.
+  async function submitIdentify() {
+    setBusy('identify');
+    setMsg(null);
+    try {
+      const d = await gql<Record<string, unknown>>(
+        `mutation($id:ID!,$title:String,$tmdbId:Int){ identify(id:$id,title:$title,tmdbId:$tmdbId){ status message } }`,
+        { id, title: idTitle.trim() || null, tmdbId: idTmdb.trim() ? parseInt(idTmdb.trim(), 10) : null },
+      );
+      const r = d.identify as { status: string; message?: string };
+      setMsg(`identify: ${r.status}${r.message ? ` — ${r.message}` : ''}`);
+      setIdentifyOpen(false);
       refetch();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -195,6 +221,45 @@ export function ItemDetail() {
             >
               enrich
             </Button>
+            <Button
+              size="sm"
+              variant="default"
+              leading={<Search size={14} />}
+              onClick={() => {
+                setIdTitle(item.title ?? '');
+                setIdTmdb('');
+                setMsg(null);
+                setIdentifyOpen(true);
+              }}
+            >
+              identify
+            </Button>
+            {identifyOpen && (
+              <Modal
+                open
+                onClose={() => setIdentifyOpen(false)}
+                title="identify"
+                footer={
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => setIdentifyOpen(false)}>
+                      cancel
+                    </Button>
+                    <Button size="sm" loading={busy === 'identify'} onClick={submitIdentify}>
+                      match
+                    </Button>
+                  </>
+                }
+              >
+                <div className="kat__form">
+                  <Field label="title" hint="re-search TMDB with this title (fixes filename-derived names)">
+                    <Input value={idTitle} onChange={(e) => setIdTitle(e.target.value)} placeholder="Big Buck Bunny" />
+                  </Field>
+                  <Field label="tmdb id" hint="optional — pin an exact match; overrides the title search">
+                    <Input value={idTmdb} onChange={(e) => setIdTmdb(e.target.value)} placeholder="e.g. 10378" inputMode="numeric" />
+                  </Field>
+                </div>
+              </Modal>
+            )}
             <Button
               size="sm"
               leading={<Package size={14} />}
