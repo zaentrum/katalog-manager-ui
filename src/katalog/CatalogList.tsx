@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Table, Badge, Input, Select, Field, Spinner, Text } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import { Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '../lib/useQuery';
+import { useCatalogStream, debounced } from '../lib/stream';
 import { statusTone } from './status';
 
 interface Item {
@@ -37,7 +38,11 @@ export function CatalogList() {
     genre: genre || null,
     year: year ? parseInt(year, 10) : null,
   };
-  const { data, loading, error } = useQuery<{ items: Item[] }>(LIST_Q, vars, [search, type, genre, year]);
+  const { data, loading, error, refetch } = useQuery<{ items: Item[] }>(LIST_Q, vars, [search, type, genre, year]);
+  // Live refresh: new/updated items appear without a manual reload (debounced —
+  // one refetch per pipeline burst).
+  const refresh = useMemo(() => debounced(refetch, 1200), [refetch]);
+  useCatalogStream(refresh);
   const genresData = useQuery<{ genres: { name: string }[] }>(GENRES_Q);
 
   const columns: TableColumn<Item>[] = [

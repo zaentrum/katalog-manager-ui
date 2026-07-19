@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Table, Badge, Button, Text, Spinner, Tabs } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import {
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useQuery } from '../lib/useQuery';
+import { useCatalogStream, debounced } from '../lib/stream';
 import { statusTone, fmtTime } from './status';
 
 interface ActivityEvent {
@@ -37,7 +38,8 @@ const FEED_Q = `{ activity(limit: 100) {
 
 // Refresh cadence for the live feed. The pipeline is a DB state machine advanced
 // by polling workers, so a few seconds is plenty to watch steps flip.
-const POLL_MS = 5000;
+// Fallback poll only — the primary trigger is the live catalog stream (SSE).
+const POLL_MS = 30_000;
 
 // Each pipeline step, translated for a non-technical reader: an icon, a short
 // label, and a plain-language verb describing what happened to the title.
@@ -96,7 +98,11 @@ export function ActivityView() {
   const { data, loading, error, refetch } = useQuery<{ activity: ActivityEvent[] }>(FEED_Q);
   const [view, setView] = useState<'friendly' | 'technical'>('friendly');
 
-  // Live tail: re-poll on an interval so the operator watches the pipeline move.
+  // Live tail: the catalog stream pushes pipeline events the moment they happen
+  // (debounced — a burst collapses into one refetch); a slow poll remains as a
+  // safety net for missed events while disconnected.
+  const refresh = useMemo(() => debounced(refetch, 800), [refetch]);
+  useCatalogStream(refresh);
   useEffect(() => {
     const t = setInterval(refetch, POLL_MS);
     return () => clearInterval(t);
