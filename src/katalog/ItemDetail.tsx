@@ -11,9 +11,10 @@ import {
   Modal,
   Field,
   Input,
+  Textarea,
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search } from 'lucide-react';
+import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search, Pencil, Lock, Unlock } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
@@ -69,6 +70,7 @@ interface Item {
   posterUrl: string | null;
   runtimeMin: number | null;
   isPackaged: boolean;
+  metadataLocked: boolean;
   overallStatus: { overallStatus: string | null; doneCount: number | null; totalSteps: number | null } | null;
   processingSteps: Step[];
   assets: Asset[];
@@ -84,7 +86,7 @@ interface Item {
 
 const ITEM_Q = `query Item($id: ID!) {
   item(id: $id) {
-    id type title year tagline rating description posterUrl runtimeMin isPackaged
+    id type title year tagline rating description posterUrl runtimeMin isPackaged metadataLocked
     overallStatus { overallStatus doneCount totalSteps }
     processingSteps { step status attempts error finishedAt }
     assets { path kind codec resolution sizeMB audioCodec audioChannels }
@@ -116,6 +118,11 @@ export function ItemDetail() {
   const [identifyOpen, setIdentifyOpen] = useState(false);
   const [idTitle, setIdTitle] = useState('');
   const [idTmdb, setIdTmdb] = useState('');
+  const [editOpen, setEditOpen] = useState(false);
+  const [edTitle, setEdTitle] = useState('');
+  const [edYear, setEdYear] = useState('');
+  const [edTagline, setEdTagline] = useState('');
+  const [edDescription, setEdDescription] = useState('');
 
   const item = data?.item;
 
@@ -145,6 +152,52 @@ export function ItemDetail() {
       const r = d.identify as { status: string; message?: string };
       setMsg(`identify: ${r.status}${r.message ? ` — ${r.message}` : ''}`);
       setIdentifyOpen(false);
+      refetch();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Manual metadata edit. Saving locks the item so the enricher never overwrites
+  // the operator's own title/year/tagline/description; unlock lets it refresh again.
+  async function submitEdit() {
+    setBusy('edit');
+    setMsg(null);
+    try {
+      await gql<Record<string, unknown>>(
+        `mutation($id:ID!,$input:ItemInput!){ updateItem(id:$id,input:$input){ id } }`,
+        {
+          id,
+          input: {
+            title: edTitle.trim() || null,
+            year: edYear.trim() ? parseInt(edYear.trim(), 10) : null,
+            tagline: edTagline,
+            description: edDescription,
+            metadataLocked: true,
+          },
+        },
+      );
+      setMsg('metadata saved — locked against enrichment overwrite');
+      setEditOpen(false);
+      refetch();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function unlockMetadata() {
+    setBusy('unlock');
+    setMsg(null);
+    try {
+      await gql<Record<string, unknown>>(
+        `mutation($id:ID!,$input:ItemInput!){ updateItem(id:$id,input:$input){ id } }`,
+        { id, input: { metadataLocked: false } },
+      );
+      setMsg('unlocked — enrichment may refresh the metadata again');
       refetch();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -202,6 +255,11 @@ export function ItemDetail() {
                 packaged
               </Badge>
             )}
+            {item.metadataLocked && (
+              <Badge tone="amber">
+                <Lock size={11} /> manual
+              </Badge>
+            )}
             {item.overallStatus?.overallStatus && (
               <Badge tone={statusTone(item.overallStatus.overallStatus)}>
                 {item.overallStatus.overallStatus} ({item.overallStatus.doneCount ?? 0}/{item.overallStatus.totalSteps ?? 0})
@@ -234,6 +292,71 @@ export function ItemDetail() {
             >
               identify
             </Button>
+            <Button
+              size="sm"
+              variant="default"
+              leading={<Pencil size={14} />}
+              onClick={() => {
+                setEdTitle(item.title ?? '');
+                setEdYear(item.year != null ? String(item.year) : '');
+                setEdTagline(item.tagline ?? '');
+                setEdDescription(item.description ?? '');
+                setMsg(null);
+                setEditOpen(true);
+              }}
+            >
+              edit
+            </Button>
+            {editOpen && (
+              <Modal
+                open
+                onClose={() => setEditOpen(false)}
+                title="edit metadata"
+                footer={
+                  <>
+                    {item.metadataLocked && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        leading={<Unlock size={13} />}
+                        loading={busy === 'unlock'}
+                        onClick={() => {
+                          setEditOpen(false);
+                          void unlockMetadata();
+                        }}
+                      >
+                        unlock
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="sm" onClick={() => setEditOpen(false)}>
+                      cancel
+                    </Button>
+                    <Button size="sm" loading={busy === 'edit'} onClick={submitEdit}>
+                      save
+                    </Button>
+                  </>
+                }
+              >
+                <div className="kat__form">
+                  <Text variant="dim">
+                    saving locks this item — enrichment will no longer overwrite your title / year /
+                    tagline / description. use unlock to let it refresh again.
+                  </Text>
+                  <Field label="title">
+                    <Input value={edTitle} onChange={(e) => setEdTitle(e.target.value)} />
+                  </Field>
+                  <Field label="year">
+                    <Input value={edYear} onChange={(e) => setEdYear(e.target.value)} inputMode="numeric" placeholder="e.g. 2019" />
+                  </Field>
+                  <Field label="tagline">
+                    <Input value={edTagline} onChange={(e) => setEdTagline(e.target.value)} />
+                  </Field>
+                  <Field label="description">
+                    <Textarea value={edDescription} rows={6} onChange={(e) => setEdDescription(e.target.value)} placeholder="your own synopsis for this show / movie…" />
+                  </Field>
+                </div>
+              </Modal>
+            )}
             {identifyOpen && (
               <Modal
                 open
