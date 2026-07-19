@@ -12,9 +12,10 @@ import {
   Field,
   Input,
   Textarea,
+  Checkbox,
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search, Pencil, Lock, Unlock } from 'lucide-react';
+import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
@@ -123,6 +124,9 @@ export function ItemDetail() {
   const [edYear, setEdYear] = useState('');
   const [edTagline, setEdTagline] = useState('');
   const [edDescription, setEdDescription] = useState('');
+  const [delOpen, setDelOpen] = useState(false);
+  const [delFiles, setDelFiles] = useState(true);
+  const [delPackages, setDelPackages] = useState(true);
 
   const item = data?.item;
 
@@ -202,6 +206,28 @@ export function ItemDetail() {
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
+      setBusy(null);
+    }
+  }
+
+  // Remove the item (a series cascades to its episodes), optionally cleaning
+  // its files off disk. On success: back to the catalog list.
+  async function submitDelete() {
+    setBusy('delete');
+    setMsg(null);
+    try {
+      const d = await gql<Record<string, unknown>>(
+        `mutation($id:ID!,$f:Boolean,$p:Boolean){ deleteItem(id:$id, deleteFiles:$f, deletePackages:$p){ deleted itemsRemoved filesRemoved packagesRemoved errors } }`,
+        { id, f: delFiles, p: delPackages },
+      );
+      const r = d.deleteItem as { deleted: boolean; itemsRemoved: number; filesRemoved: number; packagesRemoved: number; errors: string[] };
+      if (r.errors?.length) {
+        setMsg(`deleted (${r.itemsRemoved} item(s), ${r.filesRemoved} file(s), ${r.packagesRemoved} package(s)) — with errors: ${r.errors.join('; ')}`);
+      }
+      setDelOpen(false);
+      nav('/', { replace: true });
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
       setBusy(null);
     }
   }
@@ -380,6 +406,65 @@ export function ItemDetail() {
                   <Field label="tmdb id" hint="optional — pin an exact match; overrides the title search">
                     <Input value={idTmdb} onChange={(e) => setIdTmdb(e.target.value)} placeholder="e.g. 10378" inputMode="numeric" />
                   </Field>
+                </div>
+              </Modal>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              leading={<Trash2 size={14} />}
+              onClick={() => {
+                setDelFiles(true);
+                setDelPackages(true);
+                setMsg(null);
+                setDelOpen(true);
+              }}
+            >
+              delete
+            </Button>
+            {delOpen && (
+              <Modal
+                open
+                onClose={() => setDelOpen(false)}
+                title={`delete ${item.title}`}
+                footer={
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => setDelOpen(false)}>
+                      cancel
+                    </Button>
+                    <Button size="sm" loading={busy === 'delete'} onClick={submitDelete}>
+                      <Trash2 size={13} /> delete{item.type === 'series' ? ' series + episodes' : ''}
+                    </Button>
+                  </>
+                }
+              >
+                <div className="kat__form">
+                  <Text variant="muted">
+                    removes “{item.title}” from the catalog
+                    {item.type === 'series' ? ' — including ALL of its episodes' : ''}. this cannot be
+                    undone.
+                  </Text>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <Checkbox checked={delFiles} onChange={(e) => setDelFiles(e.target.checked)} />
+                    <span>
+                      <Text variant="ui">delete media file(s) from disk — irreversible</Text>
+                      {item.assets.filter((a) => a.kind !== 'packaged').map((a) => (
+                        <div key={a.path} className="kat__mono" style={{ fontSize: 11, opacity: 0.7 }}>
+                          {a.path}
+                        </div>
+                      ))}
+                      {!delFiles && (
+                        <Text variant="dim">left on disk, the next scan re-imports this item</Text>
+                      )}
+                    </span>
+                  </label>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <Checkbox checked={delPackages} onChange={(e) => setDelPackages(e.target.checked)} />
+                    <span>
+                      <Text variant="ui">delete packaged (HLS) files</Text>{' '}
+                      <Text variant="dim">regenerable by re-packaging</Text>
+                    </span>
+                  </label>
                 </div>
               </Modal>
             )}
