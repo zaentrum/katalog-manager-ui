@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Table, Button, Text, Spinner, Modal, Field, Input, Select, Textarea, Badge } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 
@@ -15,6 +15,36 @@ interface Setting {
 
 const Q = `{ settings { id key valueText valueType description } }`;
 const TYPES = ['string', 'list_csv', 'bool', 'int', 'float'];
+
+// Enrichment API keys, editable as first-class settings. Stored in the settings
+// table under these keys; the server resolves them per enrichment call, so a save
+// takes effect on the next enrichment — no restart. An empty override falls back
+// to the env/build default baked into the image.
+const API_KEYS: { key: string; label: string; hint: string }[] = [
+  {
+    key: 'tmdb.api_key',
+    label: 'TMDB api key',
+    hint: 'primary metadata + artwork (v4 read access token) — overrides the built-in key',
+  },
+  {
+    key: 'omdb.api_key',
+    label: 'OMDb api key',
+    hint: 'metadata fallback: plot / rating / poster when TMDB misses (omdbapi.com, free tier 1,000 req/day)',
+  },
+  {
+    key: 'fanart.api_key',
+    label: 'fanart.tv project key',
+    hint: 'artwork fallback: poster / backdrop TMDB is missing',
+  },
+  {
+    key: 'fanart.client_key',
+    label: 'fanart.tv personal key',
+    hint: 'optional — returns fresher fanart images',
+  },
+];
+
+// Credential-shaped settings are masked in the generic table below.
+const SECRET_KEY_RE = /(api_key|client_key|password|secret|token)$/i;
 
 export function SettingsView() {
   const gql = useGql();
@@ -36,7 +66,15 @@ export function SettingsView() {
 
   const cols: TableColumn<Setting>[] = [
     { key: 'key', header: 'key', render: (r) => <span className="kat__mono">{r.key}</span> },
-    { key: 'valueText', header: 'value', render: (r) => <span className="kat__mono">{r.valueText || '—'}</span> },
+    {
+      key: 'valueText',
+      header: 'value',
+      render: (r) => (
+        <span className="kat__mono">
+          {r.valueText ? (SECRET_KEY_RE.test(r.key) ? '••••••••' : r.valueText) : '—'}
+        </span>
+      ),
+    },
     { key: 'valueType', header: 'type', render: (r) => <Badge tone="neutral">{r.valueType}</Badge> },
     { key: 'description', header: 'description', render: (r) => r.description || <span className="kat__muted">—</span> },
     {
@@ -58,6 +96,8 @@ export function SettingsView() {
 
   return (
     <div>
+      <ApiKeysPanel settings={data?.settings ?? []} onSaved={refetch} />
+
       <div className="kat__toolbar">
         <Button leading={<Plus size={15} />} onClick={() => setEditing('new')}>
           new setting
@@ -93,6 +133,118 @@ export function SettingsView() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ApiKeysPanel edits the enrichment provider keys as masked inputs. Saving
+// upserts the setting; saving an empty value deletes the override so the server
+// falls back to its env/build default. Keys are read per enrichment call, so
+// changes apply immediately (no restart).
+function ApiKeysPanel({ settings, onSaved }: { settings: Setting[]; onSaved: () => void }) {
+  const [msg, setMsg] = useState<string | null>(null);
+
+  return (
+    <div className="kat__panel">
+      <div className="kat__panelhead">
+        <KeyRound size={15} />
+        <Text variant="ui">api keys</Text>
+        <Text variant="dim">
+          enrichment providers · saved keys override the built-in/env defaults · applied on the next
+          enrichment, no restart
+        </Text>
+        {msg && <span className="kat__ok kat__mono">{msg}</span>}
+      </div>
+      {API_KEYS.map((k) => (
+        <ApiKeyRow
+          key={k.key}
+          def={k}
+          existing={settings.find((s) => s.key === k.key) ?? null}
+          onDone={(m) => {
+            setMsg(m);
+            onSaved();
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ApiKeyRow({
+  def,
+  existing,
+  onDone,
+}: {
+  def: { key: string; label: string; hint: string };
+  existing: Setting | null;
+  onDone: (msg: string) => void;
+}) {
+  const gql = useGql();
+  const [value, setValue] = useState(existing?.valueText ?? '');
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Re-seed the input when the refetched settings land (e.g. after save/clear).
+  useEffect(() => {
+    setValue(existing?.valueText ?? '');
+  }, [existing?.id, existing?.valueText]);
+
+  const dirty = value !== (existing?.valueText ?? '');
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const v = value.trim();
+      if (v === '' && existing) {
+        await gql(`mutation($id:ID!){ deleteSetting(id:$id) }`, { id: existing.id });
+        onDone(`${def.key} cleared — using the built-in/env default`);
+      } else if (v === '') {
+        onDone(`${def.key} unchanged`);
+      } else if (existing) {
+        await gql(`mutation($id:ID!,$v:String){ updateSetting(id:$id, valueText:$v){ id } }`, {
+          id: existing.id,
+          v,
+        });
+        onDone(`${def.key} updated`);
+      } else {
+        await gql(
+          `mutation($k:String!,$v:String!,$t:String,$d:String){ createSetting(key:$k, valueText:$v, valueType:$t, description:$d){ id } }`,
+          { k: def.key, v, t: 'string', d: def.hint },
+        );
+        onDone(`${def.key} set`);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="kat__keyrow">
+      <div className="kat__keymeta">
+        <span className="kat__mono">{def.label}</span>
+        <Text variant="dim">{def.hint}</Text>
+      </div>
+      <div className="kat__keyedit">
+        <Input
+          type={show ? 'text' : 'password'}
+          placeholder={existing ? undefined : 'not set — using built-in/env default'}
+          value={value}
+          autoComplete="off"
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <Button variant="ghost" size="sm" onClick={() => setShow((s) => !s)}>
+          {show ? <EyeOff size={13} /> : <Eye size={13} />}
+        </Button>
+        <Button size="sm" loading={busy} disabled={!dirty} onClick={save}>
+          save
+        </Button>
+        {existing ? <Badge tone="green">override</Badge> : <Badge tone="neutral">default</Badge>}
+      </div>
+      {err && <div className="kat__err">{err}</div>}
     </div>
   );
 }
