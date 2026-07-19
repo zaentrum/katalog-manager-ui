@@ -171,3 +171,39 @@
   color: var(--green, #2ea043);
   font-size: 13px;
 }
+
+/* api-keys panel (settings tab) */
+.kat__panel {
+  border: 1px solid var(--border, #1f2633);
+  background: var(--surface, #11161f);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.kat__panelhead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.kat__keyrow {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(320px, 2fr);
+  gap: 8px 16px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--border, #1f2633);
+}
+.kat__keymeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kat__keyedit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kat__keyedit > :first-child {
+  flex: 1 1 auto;
+}
