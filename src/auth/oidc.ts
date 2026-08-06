@@ -17,8 +17,16 @@ const env = import.meta.env;
 // is not there and Keycloak answered 400 "Client not found". The tiles were
 // simply dead, and the config endpoint had been reporting the right id all
 // along.
+// The fallback is SAME-ORIGIN on purpose. It used to name one specific
+// deployment's Keycloak, so any install whose /api/config lookup failed would
+// send its users to authenticate against somebody else's identity provider.
+// This origin matches the default single-origin deployment profile and cannot
+// point anywhere except the server that served the page. (Same defect and same
+// fix as zaentrum-portal's src/auth/oidc.ts — the file this one was copied
+// from.)
 export let authority: string =
-  env.VITE_OIDC_AUTHORITY ?? 'https://zaentrum.demo.nalet.cloud/auth/realms/zaentrum';
+  env.VITE_OIDC_AUTHORITY ??
+  `${typeof window === 'undefined' ? '' : window.location.origin}/auth/realms/zaentrum`;
 export let clientId: string = env.VITE_OIDC_CLIENT_ID ?? 'zaentrum-web';
 
 function buildConfig(): AuthProviderProps {
