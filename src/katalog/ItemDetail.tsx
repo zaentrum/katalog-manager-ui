@@ -22,6 +22,7 @@ import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 import { statusTone } from './status';
 import { hasEpisodeCounts } from './people';
+import { confirmsTitle, deletesFromDisk, deletionNotice, type DeleteResult } from './deletion';
 
 interface Step {
   step: string;
@@ -136,8 +137,12 @@ export function ItemDetail() {
   const [edTagline, setEdTagline] = useState('');
   const [edDescription, setEdDescription] = useState('');
   const [delOpen, setDelOpen] = useState(false);
-  const [delFiles, setDelFiles] = useState(true);
-  const [delPackages, setDelPackages] = useState(true);
+  // Nothing goes from disk unless the admin ticks it: the media files cannot
+  // be brought back.
+  const [delFiles, setDelFiles] = useState(false);
+  const [delPackages, setDelPackages] = useState(false);
+  const [delTyped, setDelTyped] = useState('');
+  const [delErr, setDelErr] = useState<string | null>(null);
 
   const item = data?.item;
   // The poster takes the bearer token like any API call (see useArtwork).
@@ -223,24 +228,25 @@ export function ItemDetail() {
     }
   }
 
-  // Remove the item (a series cascades to its episodes), optionally cleaning
-  // its files off disk. On success: back to the catalog list.
+  // Remove the item (a series cascades to its episodes), and its files from
+  // disk where ticked. On success: back to the catalog list, which says what
+  // was deleted and any errors the delete met. A failed delete keeps the
+  // dialog open with the error in it.
   async function submitDelete() {
+    if (!item) return;
+    const asked = { files: delFiles, packages: delPackages };
+    if (deletesFromDisk(asked) && !confirmsTitle(delTyped, item.title)) return;
     setBusy('delete');
-    setMsg(null);
+    setDelErr(null);
     try {
-      const d = await gql<Record<string, unknown>>(
+      const d = await gql<{ deleteItem: DeleteResult }>(
         `mutation($id:ID!,$f:Boolean,$p:Boolean){ deleteItem(id:$id, deleteFiles:$f, deletePackages:$p){ deleted itemsRemoved filesRemoved packagesRemoved errors } }`,
-        { id, f: delFiles, p: delPackages },
+        { id, f: asked.files, p: asked.packages },
       );
-      const r = d.deleteItem as { deleted: boolean; itemsRemoved: number; filesRemoved: number; packagesRemoved: number; errors: string[] };
-      if (r.errors?.length) {
-        setMsg(`deleted (${r.itemsRemoved} item(s), ${r.filesRemoved} file(s), ${r.packagesRemoved} package(s)) — with errors: ${r.errors.join('; ')}`);
-      }
       setDelOpen(false);
-      nav('/', { replace: true });
+      nav('/', { replace: true, state: { deleted: deletionNotice(item.title, asked, d.deleteItem) } });
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setDelErr(e instanceof Error ? e.message : String(e));
       setBusy(null);
     }
   }
@@ -427,8 +433,10 @@ export function ItemDetail() {
               variant="ghost"
               leading={<Trash2 size={14} />}
               onClick={() => {
-                setDelFiles(true);
-                setDelPackages(true);
+                setDelFiles(false);
+                setDelPackages(false);
+                setDelTyped('');
+                setDelErr(null);
                 setMsg(null);
                 setDelOpen(true);
               }}
@@ -445,9 +453,22 @@ export function ItemDetail() {
                     <Button variant="ghost" size="sm" onClick={() => setDelOpen(false)}>
                       cancel
                     </Button>
-                    <Button size="sm" loading={busy === 'delete'} onClick={submitDelete}>
-                      <Trash2 size={13} /> delete{item.type === 'series' ? ' series + episodes' : ''}
-                    </Button>
+                    {deletesFromDisk({ files: delFiles, packages: delPackages }) ? (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        className="kat__btn-destroy"
+                        loading={busy === 'delete'}
+                        disabled={!confirmsTitle(delTyped, item.title)}
+                        onClick={submitDelete}
+                      >
+                        <Trash2 size={13} /> delete{item.type === 'series' ? ' series + episodes' : ''} + files
+                      </Button>
+                    ) : (
+                      <Button size="sm" loading={busy === 'delete'} onClick={submitDelete}>
+                        <Trash2 size={13} /> delete{item.type === 'series' ? ' series + episodes' : ''}
+                      </Button>
+                    )}
                   </>
                 }
               >
@@ -478,6 +499,15 @@ export function ItemDetail() {
                       <Text variant="dim">regenerable by re-packaging</Text>
                     </span>
                   </label>
+                  {deletesFromDisk({ files: delFiles, packages: delPackages }) && (
+                    // the label keeps the title's case: it is what must be typed
+                    <div className="kat__confirm">
+                      <Field label={`type “${item.title}” to delete it and its files`}>
+                        <Input value={delTyped} autoComplete="off" onChange={(e) => setDelTyped(e.target.value)} />
+                      </Field>
+                    </div>
+                  )}
+                  {delErr && <div className="kat__err">delete failed: {delErr}</div>}
                 </div>
               </Modal>
             )}

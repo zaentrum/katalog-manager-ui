@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
-import { Table, Badge, Input, Select, Field, Spinner, Text } from '@nalet/design-system';
+import { Table, Badge, Button, Input, Select, Field, Spinner, Text } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Search, Trash2 } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useArtwork, useSeen } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
 import { useCatalogStream, debounced } from '../lib/stream';
+import { noticeFrom, type DeletionNotice } from './deletion';
 import { statusTone } from './status';
 
 interface Item {
@@ -27,6 +28,10 @@ const LIST_Q = `query Catalog($type: String, $genre: String, $year: Int, $search
 const GENRES_Q = `{ genres { name } }`;
 
 export function CatalogList() {
+  const nav = useNavigate();
+  // What the item page just deleted, if it did (see ItemDetail's delete).
+  const loc = useLocation();
+  const deleted = noticeFrom(loc.state);
   const [search, setSearch] = useState('');
   const [type, setType] = useState('');
   const [genre, setGenre] = useState('');
@@ -83,6 +88,12 @@ export function CatalogList() {
 
   return (
     <div>
+      {deleted && (
+        <Deleted
+          notice={deleted}
+          onDismiss={() => nav({ pathname: loc.pathname, search: loc.search }, { replace: true, state: null })}
+        />
+      )}
       <div className="kat__filters">
         <Field label="search">
           <Input
@@ -154,5 +165,27 @@ function Thumb({ url }: { url: string | null }) {
       alt=""
       onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')}
     />
+  );
+}
+
+// Deleted says what the last delete removed, and the errors it met; they stay
+// until the admin dismisses them.
+function Deleted({ notice, onDismiss }: { notice: DeletionNotice; onDismiss: () => void }) {
+  return (
+    <div className="kat__notice" role="status">
+      <Trash2 size={15} />
+      <div className="kat__notice-body">
+        <Text variant="ui">deleted “{notice.title}”</Text>
+        <Text variant="muted">{notice.summary}</Text>
+        {notice.errors.map((e, i) => (
+          <div key={i} className="kat__err">
+            {e}
+          </div>
+        ))}
+      </div>
+      <Button variant="ghost" size="sm" onClick={onDismiss}>
+        dismiss
+      </Button>
+    </div>
   );
 }
