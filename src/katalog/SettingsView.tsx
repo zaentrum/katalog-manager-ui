@@ -1,24 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Table, Button, Text, Spinner, Modal, Field, Input, Select, Textarea, Badge } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { Plus, Pencil, Trash2, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { Plus, Pencil, Trash2, KeyRound, Eraser } from 'lucide-react';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
+import { fmtTime } from './status';
+import { isSecretKey, secretStatus, settingFor, type Setting } from './settings';
 
-interface Setting {
-  id: string;
-  key: string;
-  valueText: string;
-  valueType: string;
-  description: string | null;
-}
-
-const Q = `{ settings { id key valueText valueType description } }`;
+const Q = `{ settings { id key valueText valueType description isSecret isSet updatedAt } }`;
 const TYPES = ['string', 'list_csv', 'bool', 'int', 'float'];
+
+// A secret setting is write-only: katalog-manager never returns its value, so
+// the console shows only whether it is set, and sets or clears it.
+const SET_SECRET = `mutation($k:String!,$v:String!){ setSecretSetting(key:$k, value:$v){ id } }`;
+const CLEAR_SECRET = `mutation($k:String!){ clearSecretSetting(key:$k) }`;
 
 // Enrichment API keys, editable as first-class settings. Stored in the settings
 // table under these keys; the server resolves them per enrichment call, so a save
-// takes effect on the next enrichment — no restart. An empty override falls back
+// takes effect on the next enrichment — no restart. A cleared key falls back
 // to the env/build default baked into the image.
 const API_KEYS: { key: string; label: string; hint: string }[] = [
   {
@@ -43,25 +42,38 @@ const API_KEYS: { key: string; label: string; hint: string }[] = [
   },
 ];
 
-// Credential-shaped settings are masked in the generic table below.
-const SECRET_KEY_RE = /(api_key|client_key|password|secret|token)$/i;
+function SecretBadge({ setting }: { setting: Setting | null }) {
+  return <Badge tone={setting?.isSet ? 'green' : 'neutral'}>{secretStatus(setting)}</Badge>;
+}
 
 export function SettingsView() {
   const gql = useGql();
   const { data, loading, error, refetch } = useQuery<{ settings: Setting[] }>(Q);
   const [editing, setEditing] = useState<Setting | 'new' | null>(null);
+  const [settingSecret, setSettingSecret] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-  async function remove(s: Setting) {
-    if (!confirm(`delete setting "${s.key}"?`)) return;
+  async function act(done: string, query: string, vars: Record<string, unknown>) {
     setMsg(null);
+    setErr(null);
     try {
-      await gql(`mutation($id:ID!){ deleteSetting(id:$id) }`, { id: s.id });
-      setMsg(`deleted ${s.key}`);
+      await gql(query, vars);
+      setMsg(done);
       refetch();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setErr(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  function remove(s: Setting) {
+    if (!confirm(`delete setting "${s.key}"?`)) return;
+    void act(`deleted ${s.key}`, `mutation($id:ID!){ deleteSetting(id:$id) }`, { id: s.id });
+  }
+
+  function clear(s: Setting) {
+    if (!confirm(`clear "${s.key}"? the service falls back to its built-in/env default`)) return;
+    void act(`${s.key} cleared`, CLEAR_SECRET, { k: s.key });
   }
 
   const cols: TableColumn<Setting>[] = [
@@ -69,11 +81,8 @@ export function SettingsView() {
     {
       key: 'valueText',
       header: 'value',
-      render: (r) => (
-        <span className="kat__mono">
-          {r.valueText ? (SECRET_KEY_RE.test(r.key) ? '••••••••' : r.valueText) : '—'}
-        </span>
-      ),
+      render: (r) =>
+        r.isSecret ? <SecretBadge setting={r} /> : <span className="kat__mono">{r.valueText || '—'}</span>,
     },
     { key: 'valueType', header: 'type', render: (r) => <Badge tone="neutral">{r.valueType}</Badge> },
     { key: 'description', header: 'description', render: (r) => r.description || <span className="kat__muted">—</span> },
@@ -81,16 +90,28 @@ export function SettingsView() {
       key: 'id',
       header: '',
       align: 'right',
-      render: (r) => (
-        <span style={{ display: 'inline-flex', gap: 4 }}>
-          <Button variant="ghost" size="sm" leading={<Pencil size={13} />} onClick={() => setEditing(r)}>
-            edit
-          </Button>
-          <Button variant="ghost" size="sm" leading={<Trash2 size={13} />} onClick={() => remove(r)}>
-            del
-          </Button>
-        </span>
-      ),
+      render: (r) =>
+        r.isSecret ? (
+          <span style={{ display: 'inline-flex', gap: 4 }}>
+            <Button variant="ghost" size="sm" leading={<KeyRound size={13} />} onClick={() => setSettingSecret(r.key)}>
+              set
+            </Button>
+            {r.isSet && (
+              <Button variant="ghost" size="sm" leading={<Eraser size={13} />} onClick={() => clear(r)}>
+                clear
+              </Button>
+            )}
+          </span>
+        ) : (
+          <span style={{ display: 'inline-flex', gap: 4 }}>
+            <Button variant="ghost" size="sm" leading={<Pencil size={13} />} onClick={() => setEditing(r)}>
+              edit
+            </Button>
+            <Button variant="ghost" size="sm" leading={<Trash2 size={13} />} onClick={() => remove(r)}>
+              del
+            </Button>
+          </span>
+        ),
     },
   ];
 
@@ -107,6 +128,7 @@ export function SettingsView() {
         </Button>
         {msg && <span className="kat__ok kat__mono">{msg}</span>}
       </div>
+      {err && <div className="kat__err">{err}</div>}
       {error && <div className="kat__err">error: {error}</div>}
       {loading && !data ? (
         <div className="kat__state">
@@ -128,7 +150,20 @@ export function SettingsView() {
           onClose={() => setEditing(null)}
           onDone={(m) => {
             setMsg(m);
+            setErr(null);
             setEditing(null);
+            refetch();
+          }}
+        />
+      )}
+      {settingSecret && (
+        <SetSecret
+          settingKey={settingSecret}
+          onClose={() => setSettingSecret(null)}
+          onDone={(m) => {
+            setMsg(m);
+            setErr(null);
+            setSettingSecret(null);
             refetch();
           }}
         />
@@ -137,10 +172,10 @@ export function SettingsView() {
   );
 }
 
-// ApiKeysPanel edits the enrichment provider keys as masked inputs. Saving
-// upserts the setting; saving an empty value deletes the override so the server
-// falls back to its env/build default. Keys are read per enrichment call, so
-// changes apply immediately (no restart).
+// ApiKeysPanel sets and clears the enrichment provider keys. A key is never
+// shown, only whether it is set: setting replaces it, clearing deletes the
+// override so the server falls back to its env/build default. Keys are read
+// per enrichment call, so changes apply immediately (no restart).
 function ApiKeysPanel({ settings, onSaved }: { settings: Setting[]; onSaved: () => void }) {
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -150,8 +185,8 @@ function ApiKeysPanel({ settings, onSaved }: { settings: Setting[]; onSaved: () 
         <KeyRound size={15} />
         <Text variant="ui">api keys</Text>
         <Text variant="dim">
-          enrichment providers · saved keys override the built-in/env defaults · applied on the next
-          enrichment, no restart
+          enrichment providers · a saved key overrides the built-in/env default · write-only: never shown again ·
+          applied on the next enrichment, no restart
         </Text>
         {msg && <span className="kat__ok kat__mono">{msg}</span>}
       </div>
@@ -159,7 +194,7 @@ function ApiKeysPanel({ settings, onSaved }: { settings: Setting[]; onSaved: () 
         <ApiKeyRow
           key={k.key}
           def={k}
-          existing={settings.find((s) => s.key === k.key) ?? null}
+          existing={settingFor(settings, k.key)}
           onDone={(m) => {
             setMsg(m);
             onSaved();
@@ -180,45 +215,27 @@ function ApiKeyRow({
   onDone: (msg: string) => void;
 }) {
   const gql = useGql();
-  const [value, setValue] = useState(existing?.valueText ?? '');
-  const [show, setShow] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // what the operator types; the stored key is never read back into it
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState<'set' | 'clear' | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // Re-seed the input when the refetched settings land (e.g. after save/clear).
-  useEffect(() => {
-    setValue(existing?.valueText ?? '');
-  }, [existing?.id, existing?.valueText]);
-
-  const dirty = value !== (existing?.valueText ?? '');
-
-  async function save() {
-    setBusy(true);
+  async function run(what: 'set' | 'clear') {
+    setBusy(what);
     setErr(null);
     try {
-      const v = value.trim();
-      if (v === '' && existing) {
-        await gql(`mutation($id:ID!){ deleteSetting(id:$id) }`, { id: existing.id });
-        onDone(`${def.key} cleared — using the built-in/env default`);
-      } else if (v === '') {
-        onDone(`${def.key} unchanged`);
-      } else if (existing) {
-        await gql(`mutation($id:ID!,$v:String){ updateSetting(id:$id, valueText:$v){ id } }`, {
-          id: existing.id,
-          v,
-        });
-        onDone(`${def.key} updated`);
-      } else {
-        await gql(
-          `mutation($k:String!,$v:String!,$t:String,$d:String){ createSetting(key:$k, valueText:$v, valueType:$t, description:$d){ id } }`,
-          { k: def.key, v, t: 'string', d: def.hint },
-        );
+      if (what === 'set') {
+        await gql(SET_SECRET, { k: def.key, v: value.trim() });
+        setValue('');
         onDone(`${def.key} set`);
+      } else {
+        await gql(CLEAR_SECRET, { k: def.key });
+        onDone(`${def.key} cleared — using the built-in/env default`);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -230,22 +247,72 @@ function ApiKeyRow({
       </div>
       <div className="kat__keyedit">
         <Input
-          type={show ? 'text' : 'password'}
-          placeholder={existing ? undefined : 'not set — using built-in/env default'}
+          type="password"
+          aria-label={`new ${def.label}`}
+          placeholder={existing?.isSet ? 'a new key replaces the one set' : 'not set — using the built-in/env default'}
           value={value}
-          autoComplete="off"
+          autoComplete="new-password"
           onChange={(e) => setValue(e.target.value)}
         />
-        <Button variant="ghost" size="sm" onClick={() => setShow((s) => !s)}>
-          {show ? <EyeOff size={13} /> : <Eye size={13} />}
+        <Button size="sm" loading={busy === 'set'} disabled={!value.trim()} onClick={() => void run('set')}>
+          set
         </Button>
-        <Button size="sm" loading={busy} disabled={!dirty} onClick={save}>
-          save
-        </Button>
-        {existing ? <Badge tone="green">override</Badge> : <Badge tone="neutral">default</Badge>}
+        {existing?.isSet && (
+          <Button variant="ghost" size="sm" loading={busy === 'clear'} onClick={() => void run('clear')}>
+            clear
+          </Button>
+        )}
+        <SecretBadge setting={existing} />
       </div>
+      {existing?.isSet && existing.updatedAt && <Text variant="dim">set {fmtTime(existing.updatedAt)}</Text>}
       {err && <div className="kat__err">{err}</div>}
     </div>
+  );
+}
+
+// SetSecret sets a secret setting from the table: a value typed in, never one
+// read back.
+function SetSecret({ settingKey, onClose, onDone }: { settingKey: string; onClose: () => void; onDone: (msg: string) => void }) {
+  const gql = useGql();
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await gql(SET_SECRET, { k: settingKey, v: value.trim() });
+      onDone(`${settingKey} set`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`set ${settingKey}`}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            cancel
+          </Button>
+          <Button size="sm" loading={busy} disabled={!value.trim()} onClick={submit}>
+            set
+          </Button>
+        </>
+      }
+    >
+      <div className="kat__form">
+        <Field label="value" hint="write-only: it is never shown again" error={err ?? undefined}>
+          <Input type="password" value={value} autoComplete="new-password" onChange={(e) => setValue(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 
@@ -266,6 +333,8 @@ function EditSetting({
   const [description, setDescription] = useState(setting?.description ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // a new key that names a credential goes in write-only, as a secret
+  const secret = isNew && isSecretKey(key);
 
   async function submit() {
     if (isNew && !key.trim()) {
@@ -275,7 +344,9 @@ function EditSetting({
     setBusy(true);
     setErr(null);
     try {
-      if (isNew) {
+      if (secret) {
+        await gql(SET_SECRET, { k: key.trim(), v: valueText.trim() });
+      } else if (isNew) {
         await gql(
           `mutation($k:String!,$v:String!,$t:String,$d:String){ createSetting(key:$k, valueText:$v, valueType:$t, description:$d){ id } }`,
           { k: key, v: valueText, t: valueType, d: description || null },
@@ -286,7 +357,7 @@ function EditSetting({
           { id: setting.id, v: valueText, t: valueType, d: description || null },
         );
       }
-      onDone(isNew ? `created ${key}` : `updated ${setting.key}`);
+      onDone(secret ? `${key.trim()} set` : isNew ? `created ${key}` : `updated ${setting.key}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -304,7 +375,7 @@ function EditSetting({
           <Button variant="ghost" size="sm" onClick={onClose}>
             cancel
           </Button>
-          <Button size="sm" loading={busy} onClick={submit}>
+          <Button size="sm" loading={busy} disabled={secret && !valueText.trim()} onClick={submit}>
             save
           </Button>
         </>
@@ -314,15 +385,29 @@ function EditSetting({
         <Field label="key" hint={isNew ? undefined : 'read-only after create'} error={err && isNew ? err : undefined}>
           <Input value={key} disabled={!isNew} onChange={(e) => setKey(e.target.value)} />
         </Field>
-        <Field label="value">
-          <Input value={valueText} onChange={(e) => setValueText(e.target.value)} />
-        </Field>
-        <Field label="type">
-          <Select value={valueType} onChange={(e) => setValueType(e.target.value)} options={TYPES.map((t) => ({ label: t, value: t }))} />
-        </Field>
-        <Field label="description">
-          <Textarea value={description} rows={2} onChange={(e) => setDescription(e.target.value)} />
-        </Field>
+        {secret ? (
+          <Field label="value" hint="a secret: write-only, it is never shown again">
+            <Input
+              type="password"
+              value={valueText}
+              autoComplete="new-password"
+              onChange={(e) => setValueText(e.target.value)}
+            />
+          </Field>
+        ) : (
+          <>
+            <Field label="value">
+              <Input value={valueText} onChange={(e) => setValueText(e.target.value)} />
+            </Field>
+            <Field label="type">
+              <Select value={valueType} onChange={(e) => setValueType(e.target.value)} options={TYPES.map((t) => ({ label: t, value: t }))} />
+            </Field>
+            <Field label="description">
+              <Textarea value={description} rows={2} onChange={(e) => setDescription(e.target.value)} />
+            </Field>
+          </>
+        )}
+        {err && !isNew && <div className="kat__err">{err}</div>}
       </div>
     </Modal>
   );
