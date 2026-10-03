@@ -1,5 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useAuth } from 'react-oidc-context';
+
+/**
+ * useSeen reports whether the element has come near the viewport (within
+ * margin) at least once, so an image is fetched only when it is about to
+ * show. Without IntersectionObserver everything counts as seen.
+ */
+export function useSeen(ref: RefObject<Element | null>, margin = '200px'): boolean {
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (seen || !el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setSeen(true);
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setSeen(true);
+    }, { rootMargin: margin });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref, seen, margin]);
+  return seen;
+}
 
 /**
  * useArtwork loads an image katalog-manager serves behind its auth

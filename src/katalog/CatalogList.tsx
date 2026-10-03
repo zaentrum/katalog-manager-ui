@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Table, Badge, Input, Select, Field, Spinner, Text } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import { Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useArtwork, useSeen } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
 import { useCatalogStream, debounced } from '../lib/stream';
 import { statusTone } from './status';
@@ -46,22 +47,7 @@ export function CatalogList() {
   const genresData = useQuery<{ genres: { name: string }[] }>(GENRES_Q);
 
   const columns: TableColumn<Item>[] = [
-    {
-      key: 'posterUrl',
-      header: '',
-      width: 40,
-      render: (r) =>
-        r.posterUrl ? (
-          <img
-            className="kat__poster"
-            src={r.posterUrl}
-            alt=""
-            onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')}
-          />
-        ) : (
-          <div className="kat__poster" />
-        ),
-    },
+    { key: 'posterUrl', header: '', width: 40, render: (r) => <Thumb url={r.posterUrl} /> },
     {
       key: 'title',
       header: 'title',
@@ -151,5 +137,22 @@ export function CatalogList() {
         />
       )}
     </div>
+  );
+}
+
+// A row's poster, fetched with the bearer token (see useArtwork) once the row
+// comes near the viewport: a list of 200 titles loads the posters it shows,
+// not every one at once. Until then, and without a poster, an empty frame.
+function Thumb({ url }: { url: string | null }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const src = useArtwork(useSeen(frame) ? url : null);
+  if (!src) return <div ref={frame} className="kat__poster" />;
+  return (
+    <img
+      className="kat__poster"
+      src={src}
+      alt=""
+      onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')}
+    />
   );
 }
