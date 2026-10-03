@@ -30,6 +30,7 @@ a build-time fallback), so the same published image works against any Keycloak.
 npm install          # vendored @nalet/design-system tarball in ./vendor
 npm run dev          # proxies /api → http://localhost:8080 (a running katalog-manager)
 npm run build        # tsc -b && vite build
+npm test             # unit tests of the pure helpers (node --test; Node 22.18+ runs .ts as is)
 ```
 
 ## Container

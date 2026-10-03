@@ -20,6 +20,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 import { statusTone } from './status';
+import { hasEpisodeCounts } from './people';
 
 interface Step {
   step: string;
@@ -57,14 +58,16 @@ interface Trailer {
   downloadedAt: string | null;
 }
 // A credit, as katalog-manager lists a title's people: by role, then order,
-// then name. job, character and order are what TMDB says of it, null when
-// unknown (an actor has no job; crew plays no character).
+// then name. job, character, order and episodeCount are what TMDB says of it,
+// null when unknown (an actor has no job; crew plays no character; only a
+// series' credits count episodes).
 interface Credit {
   id: string;
   role: string;
   job: string | null;
   character: string | null;
   order: number | null;
+  episodeCount: number | null;
   person: { id: string; name: string };
 }
 interface Item {
@@ -102,7 +105,7 @@ const ITEM_Q = `query Item($id: ID!) {
     chapters { ordinal title startMs endMs }
     trailerLinks { site title url downloadedAt }
     genres { name }
-    people { id role job character order person { id name } }
+    people { id role job character order episodeCount person { id name } }
     tags
     externalIds { source externalId }
     diagnostics { sourcePath sourceSize notes }
@@ -617,7 +620,8 @@ function TrailersTab({ trailers }: { trailers: Trailer[] }) {
 }
 
 // role and name lead each row, so a row reads "director Colin Levy …"; the
-// rest is what TMDB says of the credit, in the order it lists them.
+// rest is what TMDB says of the credit. episodes only on a series: a film's
+// credits never count any.
 function CastTab({ people }: { people: Credit[] }) {
   const none = <span className="kat__muted">—</span>;
   const cols: TableColumn<Credit>[] = [
@@ -627,6 +631,9 @@ function CastTab({ people }: { people: Credit[] }) {
     { key: 'character', header: 'character', render: (r) => r.character || none },
     { key: 'order', header: 'order', align: 'right', render: (r) => r.order ?? none },
   ];
+  if (hasEpisodeCounts(people)) {
+    cols.push({ key: 'episodeCount', header: 'episodes', align: 'right', render: (r) => r.episodeCount ?? none });
+  }
   return <Table columns={cols} rows={people} rowKey={(r) => r.id} dense empty={<Text variant="muted">no cast.</Text>} />;
 }
 
