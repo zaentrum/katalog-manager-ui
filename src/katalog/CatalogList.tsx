@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Table, Badge, Input, Select, Field, Spinner, Text } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import { Search } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useArtwork, useSeen } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
 import { useCatalogStream, debounced } from '../lib/stream';
@@ -27,7 +27,6 @@ const LIST_Q = `query Catalog($type: String, $genre: String, $year: Int, $search
 const GENRES_Q = `{ genres { name } }`;
 
 export function CatalogList() {
-  const nav = useNavigate();
   const [search, setSearch] = useState('');
   const [type, setType] = useState('');
   const [genre, setGenre] = useState('');
@@ -51,10 +50,11 @@ export function CatalogList() {
     {
       key: 'title',
       header: 'title',
+      // a real link: reachable by keyboard, and it opens in a new tab
       render: (r) => (
-        <span className="kat__rowlink" onClick={() => nav(`/item/${r.id}`)}>
+        <Link className="kat__rowlink" to={`/item/${r.id}`}>
           {r.title}
-        </span>
+        </Link>
       ),
     },
     { key: 'type', header: 'type', render: (r) => <span className="kat__mono">{r.type}</span> },
