@@ -16,6 +16,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 24: the unit tests are TypeScript run by node --test directly, which
+          # needs a Node that strips types by itself (22.18+); 20 cannot.
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Before the image: a failing test publishes nothing.
+      - name: Unit tests
+        run: npm test
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
