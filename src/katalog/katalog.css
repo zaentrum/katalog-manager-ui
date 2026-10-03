@@ -32,6 +32,13 @@
   color: var(--cloud-blue, #58a6ff);
   cursor: pointer;
 }
+a.kat__rowlink {
+  text-decoration: none;
+}
+a.kat__rowlink:hover,
+a.kat__rowlink:focus-visible {
+  text-decoration: underline;
+}
 .kat__poster {
   width: 32px;
   height: 48px;

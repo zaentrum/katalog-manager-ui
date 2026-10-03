@@ -16,7 +16,7 @@ import {
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 import { statusTone } from './status';
@@ -528,7 +528,7 @@ export function ItemDetail() {
         {tab === 'media' && <SegmentsTab segments={item.segments} />}
         {tab === 'chapters' && <ChaptersTab chapters={item.chapters} />}
         {tab === 'trailers' && <TrailersTab trailers={item.trailerLinks} />}
-        {tab === 'cast' && <CastTab people={item.people} />}
+        {tab === 'cast' && <CastTab people={item.people} from={{ id: item.id, title: item.title }} />}
         {tab === 'diagnostics' && <DiagnosticsTab item={item} />}
       </div>
     </div>
@@ -621,12 +621,21 @@ function TrailersTab({ trailers }: { trailers: Trailer[] }) {
 
 // role and name lead each row, so a row reads "director Colin Levy …"; the
 // rest is what TMDB says of the credit. episodes only on a series: a film's
-// credits never count any.
-function CastTab({ people }: { people: Credit[] }) {
+// credits never count any. Each name opens the person's record, which is
+// told the title it came from (`from`) for its way back.
+function CastTab({ people, from }: { people: Credit[]; from: { id: string; title: string } }) {
   const none = <span className="kat__muted">—</span>;
   const cols: TableColumn<Credit>[] = [
     { key: 'role', header: 'role', render: (r) => <span className="kat__mono">{r.role}</span> },
-    { key: 'person', header: 'name', render: (r) => r.person.name },
+    {
+      key: 'person',
+      header: 'name',
+      render: (r) => (
+        <Link className="kat__rowlink" to={`/person/${r.person.id}`} state={{ from }}>
+          {r.person.name}
+        </Link>
+      ),
+    },
     { key: 'job', header: 'job', render: (r) => r.job || none },
     { key: 'character', header: 'character', render: (r) => r.character || none },
     { key: 'order', header: 'order', align: 'right', render: (r) => r.order ?? none },
