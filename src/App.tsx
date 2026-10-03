@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { Badge, Button } from '@nalet/design-system';
+import { Badge, Button, Heading, Text } from '@nalet/design-system';
 import { LogOut } from 'lucide-react';
+import { ADMIN_ROLE, isAdmin } from './auth/admin';
 import { ZaentrumLockup } from './glyphs';
 import { KatalogLayout } from './katalog/KatalogLayout';
 import { CatalogList } from './katalog/CatalogList';
@@ -40,6 +41,9 @@ export function App() {
 
   const p = auth.user?.profile;
   const name = (p?.preferred_username as string) || (p?.name as string) || 'you';
+  // The console is for administrators; anyone else gets a page that says so
+  // instead of the app. katalog-manager refuses them every operation anyway.
+  const admin = isAdmin(auth.user?.access_token);
 
   return (
     <div className="sh">
@@ -63,26 +67,51 @@ export function App() {
         </div>
       </header>
       <main className="sh__main">
-        <Routes>
-          <Route element={<KatalogLayout mode={MODE} />}>
-            {MODE === 'manage' ? (
-              <>
-                <Route index element={<ScanView />} />
-                <Route path="scan" element={<ScanView />} />
-                <Route path="activity" element={<ActivityView />} />
-                <Route path="settings" element={<SettingsView />} />
-              </>
-            ) : (
-              <>
-                <Route index element={<CatalogList />} />
-                <Route path="item/:id" element={<ItemDetail />} />
-                <Route path="person/:id" element={<PersonDetail />} />
-              </>
-            )}
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        {admin ? <Console /> : <ForAdministrators name={name} />}
       </main>
     </div>
+  );
+}
+
+// ForAdministrators stands in for the console when the signed-in user's token
+// does not carry the admin role.
+function ForAdministrators({ name }: { name: string }) {
+  return (
+    <div className="sh__denied">
+      <Heading level={1} chevron>
+        This console is for administrators
+      </Heading>
+      <Text variant="muted">
+        {name === 'you' ? 'You are signed in' : `Signed in as ${name},`} without the {ADMIN_ROLE} role.
+      </Text>
+      <a className="sh__denied-link" href="/portal/">
+        back to the launchpad
+      </a>
+    </div>
+  );
+}
+
+// Console is the app: the catalog (browse) or catalog management, by MODE.
+function Console() {
+  return (
+    <Routes>
+      <Route element={<KatalogLayout mode={MODE} />}>
+        {MODE === 'manage' ? (
+          <>
+            <Route index element={<ScanView />} />
+            <Route path="scan" element={<ScanView />} />
+            <Route path="activity" element={<ActivityView />} />
+            <Route path="settings" element={<SettingsView />} />
+          </>
+        ) : (
+          <>
+            <Route index element={<CatalogList />} />
+            <Route path="item/:id" element={<ItemDetail />} />
+            <Route path="person/:id" element={<PersonDetail />} />
+          </>
+        )}
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
