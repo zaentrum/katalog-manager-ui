@@ -17,6 +17,7 @@ import {
 import type { TableColumn } from '@nalet/design-system';
 import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useArtwork } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 import { statusTone } from './status';
@@ -139,6 +140,8 @@ export function ItemDetail() {
   const [delPackages, setDelPackages] = useState(true);
 
   const item = data?.item;
+  // The poster takes the bearer token like any API call (see useArtwork).
+  const poster = useArtwork(item?.posterUrl ?? null);
 
   async function run(label: string, mutation: string, pick: (d: Record<string, unknown>) => string) {
     setBusy(label);
@@ -270,12 +273,12 @@ export function ItemDetail() {
       </Button>
 
       <div className="kat__obj-head">
-        {item.posterUrl && (
+        {poster && (
           <img
             className="kat__obj-poster"
-            src={item.posterUrl}
+            src={poster}
             alt=""
-            onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')}
+            onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
           />
         )}
         <div className="kat__obj-meta">
