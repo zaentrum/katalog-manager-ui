@@ -30,6 +30,60 @@ export function externalIdsText(p: { tmdbPersonId?: string | null; imdbId?: stri
   return ids.join('  ');
 }
 
+/** An episode's place in its series, "S01E02": as much of it as is known,
+ *  empty for a title that is no episode. */
+export function episodeLabel(season?: number | null, episode?: number | null): string {
+  const two = (n: number) => String(n).padStart(2, '0');
+  return (season != null ? `S${two(season)}` : '') + (episode != null ? `E${two(episode)}` : '');
+}
+
+/** A person's credit as katalog-manager's Person.credits gives it. */
+export interface PersonCredit {
+  id: string;
+  role: string;
+  job: string | null;
+  character: string | null;
+  episodeCount: number | null;
+  item: {
+    id: string;
+    title: string;
+    year: number | null;
+    seasonNumber: number | null;
+    episodeNumber: number | null;
+    parent: { id: string; title: string } | null;
+  };
+}
+
+/** A row of a person's credits table: the title (an episode with its series
+ *  and its place in it), then what the credit says. */
+export interface CreditRow {
+  id: string;
+  itemId: string;
+  title: string;
+  year: number | null;
+  series: { id: string; title: string } | null;
+  episode: string;
+  role: string;
+  job: string | null;
+  character: string | null;
+  episodeCount: number | null;
+}
+
+export function creditRow(c: PersonCredit): CreditRow {
+  return {
+    id: c.id,
+    itemId: c.item.id,
+    title: c.item.title,
+    year: c.item.year,
+    series: c.item.parent,
+    episode: episodeLabel(c.item.seasonNumber, c.item.episodeNumber),
+    role: c.role,
+    job: c.job,
+    character: c.character,
+    episodeCount: c.episodeCount,
+  };
+}
+
 /** The title a person page was opened from, as the cast tab passes it in the
  *  router state; null for anything else (a deep link, another page's state). */
 export function fromItem(state: unknown): { id: string; title: string } | null {

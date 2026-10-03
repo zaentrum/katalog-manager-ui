@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { externalIdsText, fromItem, hasEpisodeCounts, lockSummary, portraitUrl } from './people.ts';
+import {
+  creditRow,
+  episodeLabel,
+  externalIdsText,
+  fromItem,
+  hasEpisodeCounts,
+  lockSummary,
+  portraitUrl,
+  type PersonCredit,
+} from './people.ts';
 
 test('a film’s credits carry no episode counts', () => {
   assert.equal(hasEpisodeCounts([]), false);
@@ -59,4 +68,65 @@ test('any other state names no title', () => {
     { from: { id: 'x', title: '' } },
   ];
   for (const state of states) assert.equal(fromItem(state), null, JSON.stringify(state));
+});
+
+test('an episode’s place reads S01E02, as much of it as is known', () => {
+  assert.equal(episodeLabel(1, 2), 'S01E02');
+  assert.equal(episodeLabel(10, 120), 'S10E120');
+  assert.equal(episodeLabel(0, 0), 'S00E00');
+  assert.equal(episodeLabel(3, null), 'S03');
+  assert.equal(episodeLabel(null, 4), 'E04');
+  assert.equal(episodeLabel(null, null), '');
+  assert.equal(episodeLabel(), '');
+});
+
+const credit = (item: Partial<PersonCredit['item']>, more: Partial<PersonCredit> = {}): PersonCredit => ({
+  id: 'c1',
+  role: 'actor',
+  job: null,
+  character: 'Guest',
+  episodeCount: null,
+  ...more,
+  item: { id: 'e1', title: 'Pilot', year: 2011, seasonNumber: null, episodeNumber: null, parent: null, ...item },
+});
+
+test('an episode’s credit row names its series and its place in it', () => {
+  assert.deepEqual(
+    creditRow(credit({ seasonNumber: 1, episodeNumber: 2, parent: { id: 's1', title: 'A Show' } })),
+    {
+      id: 'c1',
+      itemId: 'e1',
+      title: 'Pilot',
+      year: 2011,
+      series: { id: 's1', title: 'A Show' },
+      episode: 'S01E02',
+      role: 'actor',
+      job: null,
+      character: 'Guest',
+      episodeCount: null,
+    },
+  );
+});
+
+test('any other title’s credit row is the title and what the credit says', () => {
+  assert.deepEqual(
+    creditRow(
+      credit(
+        { id: 's1', title: 'A Show', year: 2010 },
+        { id: 'c2', role: 'writer', job: 'Writer, Co-Writer', character: null, episodeCount: 6 },
+      ),
+    ),
+    {
+      id: 'c2',
+      itemId: 's1',
+      title: 'A Show',
+      year: 2010,
+      series: null,
+      episode: '',
+      role: 'writer',
+      job: 'Writer, Co-Writer',
+      character: null,
+      episodeCount: 6,
+    },
+  );
 });
