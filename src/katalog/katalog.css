@@ -106,6 +106,24 @@
   flex-direction: column;
   gap: 12px;
 }
+
+/* person record: one biography per language */
+.kat__bio {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kat__bio-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.kat__bio-text {
+  margin: 0;
+  max-width: 72ch;
+  line-height: 1.55;
+  white-space: pre-line;
+}
 .kat__err {
   color: var(--amber, #f2b233);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);

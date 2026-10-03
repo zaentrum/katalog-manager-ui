@@ -7,6 +7,7 @@ import { ZaentrumLockup } from './glyphs';
 import { KatalogLayout } from './katalog/KatalogLayout';
 import { CatalogList } from './katalog/CatalogList';
 import { ItemDetail } from './katalog/ItemDetail';
+import { PersonDetail } from './katalog/PersonDetail';
 import { ScanView } from './katalog/ScanView';
 import { ActivityView } from './katalog/ActivityView';
 import { SettingsView } from './katalog/SettingsView';
@@ -75,6 +76,7 @@ export function App() {
               <>
                 <Route index element={<CatalogList />} />
                 <Route path="item/:id" element={<ItemDetail />} />
+                <Route path="person/:id" element={<PersonDetail />} />
               </>
             )}
           </Route>
