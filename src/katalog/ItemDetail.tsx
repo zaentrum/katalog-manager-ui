@@ -56,9 +56,16 @@ interface Trailer {
   url: string;
   downloadedAt: string | null;
 }
-interface Person {
+// A credit, as katalog-manager lists a title's people: by role, then order,
+// then name. job, character and order are what TMDB says of it, null when
+// unknown (an actor has no job; crew plays no character).
+interface Credit {
+  id: string;
   role: string;
-  person: { name: string };
+  job: string | null;
+  character: string | null;
+  order: number | null;
+  person: { id: string; name: string };
 }
 interface Item {
   id: string;
@@ -79,7 +86,7 @@ interface Item {
   chapters: Chapter[];
   trailerLinks: Trailer[];
   genres: { name: string }[];
-  people: Person[];
+  people: Credit[];
   tags: string[];
   externalIds: { source: string; externalId: string }[];
   diagnostics: { sourcePath: string | null; sourceSize: number | null; notes: string | null } | null;
@@ -95,7 +102,7 @@ const ITEM_Q = `query Item($id: ID!) {
     chapters { ordinal title startMs endMs }
     trailerLinks { site title url downloadedAt }
     genres { name }
-    people { role person { name } }
+    people { id role job character order person { id name } }
     tags
     externalIds { source externalId }
     diagnostics { sourcePath sourceSize notes }
@@ -609,12 +616,18 @@ function TrailersTab({ trailers }: { trailers: Trailer[] }) {
   return <Table columns={cols} rows={trailers} rowKey={(_, i) => i} dense empty={<Text variant="muted">no trailers.</Text>} />;
 }
 
-function CastTab({ people }: { people: Person[] }) {
-  const cols: TableColumn<Person>[] = [
+// role and name lead each row, so a row reads "director Colin Levy …"; the
+// rest is what TMDB says of the credit, in the order it lists them.
+function CastTab({ people }: { people: Credit[] }) {
+  const none = <span className="kat__muted">—</span>;
+  const cols: TableColumn<Credit>[] = [
     { key: 'role', header: 'role', render: (r) => <span className="kat__mono">{r.role}</span> },
     { key: 'person', header: 'name', render: (r) => r.person.name },
+    { key: 'job', header: 'job', render: (r) => r.job || none },
+    { key: 'character', header: 'character', render: (r) => r.character || none },
+    { key: 'order', header: 'order', align: 'right', render: (r) => r.order ?? none },
   ];
-  return <Table columns={cols} rows={people} rowKey={(_, i) => i} dense empty={<Text variant="muted">no cast.</Text>} />;
+  return <Table columns={cols} rows={people} rowKey={(r) => r.id} dense empty={<Text variant="muted">no cast.</Text>} />;
 }
 
 function DiagnosticsTab({ item }: { item: Item }) {
