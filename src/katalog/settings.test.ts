@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isSecretKey, secretStatus, settingFor } from './settings.ts';
 
-test('the API keys katalog-manager reads are secrets', () => {
-  for (const key of ['tmdb.api_key', 'omdb.api_key', 'fanart.api_key', 'fanart.client_key', ' tmdb.api_key ']) {
+test('the API keys katalog-manager reads are secrets, and a key that names one, spaces around it aside', () => {
+  for (const key of ['tmdb.api_key', 'omdb.api_key', 'fanart.api_key', 'fanart.client_key', ' tmdb.api_key ', ' license.key ', 'signing_key\n']) {
     assert.equal(isSecretKey(key), true, key);
   }
 });

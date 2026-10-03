@@ -43,6 +43,9 @@ test('the roles are read at a dot-separated path', () => {
   for (const path of ['flat.roles', 'realm_access', 'realm_access.roles.more', 'nowhere', '']) {
     assert.deepEqual(rolesAt(claims, path), [], path);
   }
+  // a path stops at a list, as katalog-manager's does: it names keys, not places
+  assert.deepEqual(rolesAt({ groups: [{ roles: ['zaentrum-admin'] }] }, 'groups.0.roles'), []);
+  assert.deepEqual(rolesAt({ groups: ['zaentrum-admin'] }, 'groups.0'), []);
   assert.deepEqual(rolesAt(null, 'realm_access.roles'), []);
 });
 
