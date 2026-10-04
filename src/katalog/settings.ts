@@ -16,7 +16,7 @@ export interface Setting {
   updatedAt: string | null;
 }
 
-// What katalog-manager takes for a secret (graph/settings.go): the keys it
+// What katalog-manager takes for a secret (model/settings.go): the keys it
 // reads as API keys, and any key that names a credential.
 const SECRET_KEYS = ['tmdb.api_key', 'omdb.api_key', 'fanart.api_key', 'fanart.client_key'];
 const SECRET_WORDS = /secret|token|passw(or)?d|credential|api[._-]?key/i;

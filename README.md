@@ -2,7 +2,7 @@
 
 Standalone **catalog-management console** for the zaentrum platform — the admin UI
 that talks to [`katalog-manager`](https://github.com/zaentrum/katalog-manager) over
-GraphQL. Catalog, scan, downloads and settings, built on `@nalet/design-system`.
+GraphQL. Catalog, scan, processing and settings, built on `@nalet/design-system`.
 
 It is a service in its own right so it can be released independently of the
 catalog **API**. It is launched from the [zaentrum portal](https://github.com/zaentrum/zaentrum-portal)
@@ -22,6 +22,23 @@ another role sets `VITE_KATALOG_ADMIN_ROLE` and `VITE_KATALOG_ROLES_CLAIM`.
 Secret settings (the enrichment providers' API keys, and any setting whose
 key names a credential) are write-only: the settings tab shows whether each is
 set, and sets or clears it, but never shows a value.
+
+## Processing
+
+Catalog management's **Processing** tab is what the pipeline holds: every step
+with how many items are pending, running, done, failed, retrying, stalled past
+their timeout, skipped and not applicable; the failed steps with their last
+error, attempts and next retry; and how katalog-manager retries a failed step
+by itself. A failed step is retried from its row, or all at once (Retry All
+Failed asks first). An item's **Steps** tab is its step timeline, in pipeline
+order, with each step's attempts, error and retry, and a Retry for a failed
+step; a series' **Episodes** tab is its seasons and episodes as a tree, each
+episode with its processing state. A delete removes files from disk only when
+ticked.
+
+These need a katalog-manager with the step retries (its `processingOverview`,
+`retryPolicy`, `retryStep` and `retryFailed`): deploy it first. Against an
+older one the rest of the console works, and these say they cannot read.
 
 ## Runtime-configurable mount path
 
