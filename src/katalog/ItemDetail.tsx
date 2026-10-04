@@ -15,7 +15,7 @@ import {
   Checkbox,
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { ArrowLeft, Sparkles, Package, CheckCircle2, Film, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
+import { ArrowLeft, Sparkles, Package, CheckCircle2, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useArtwork } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
@@ -534,18 +534,6 @@ export function ItemDetail() {
             >
               validate
             </Button>
-            <Button
-              size="sm"
-              variant="default"
-              leading={<Film size={14} />}
-              loading={busy === 'trailers'}
-              onClick={() => run('trailers', `mutation($id:ID!){ fetchTrailers(id:$id){ enqueued message } }`, (d) => {
-                const r = d.fetchTrailers as { enqueued: number; message?: string };
-                return `trailers: enqueued ${r.enqueued}${r.message ? ` — ${r.message}` : ''}`;
-              })}
-            >
-              fetch trailers
-            </Button>
           </div>
           {msg && <div className="kat__ok kat__mono">{msg}</div>}
         </div>
@@ -646,7 +634,7 @@ function TrailersTab({ trailers }: { trailers: Trailer[] }) {
     {
       key: 'downloadedAt',
       header: 'local',
-      render: (r) => (r.downloadedAt ? <Badge tone="green" dot>downloaded</Badge> : <Badge tone="neutral">remote</Badge>),
+      render: (r) => (r.downloadedAt ? <Badge tone="green" dot>local</Badge> : <Badge tone="neutral">linked</Badge>),
     },
   ];
   return <Table columns={cols} rows={trailers} rowKey={(_, i) => i} dense empty={<Text variant="muted">no trailers.</Text>} />;

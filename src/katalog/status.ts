@@ -8,7 +8,7 @@ export function fmtTime(s: string | null | undefined): string {
   return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-// Maps a katalog overall/step/download status to a design-system Badge tone.
+// Maps a katalog overall/step/scan status to a design-system Badge tone.
 export function statusTone(s: string | null | undefined): BadgeTone {
   switch (s) {
     case 'complete':
@@ -21,7 +21,6 @@ export function statusTone(s: string | null | undefined): BadgeTone {
     case 'processing':
     case 'queued':
     case 'in_progress':
-    case 'downloading':
     case 'pending':
       return 'blue';
     default:
