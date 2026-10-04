@@ -16,12 +16,13 @@ import {
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import { ArrowLeft, Sparkles, Package, CheckCircle2, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useArtwork } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 import { statusTone } from './status';
-import { hasEpisodeCounts } from './people';
+import { fromItem, hasEpisodeCounts } from './people';
+import { SeriesStructure } from './SeriesStructure';
 import { StepTimeline } from './StepTimeline';
 import { confirmsTitle, deletesFromDisk, deletionNotice, type DeleteResult } from './deletion';
 
@@ -121,9 +122,18 @@ function ms(t: number): string {
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// The item page, afresh for each item: a link from a series to one of its
+// episodes opens the episode on its overview, its dialogs closed.
 export function ItemDetail() {
   const { id = '' } = useParams();
+  return <ItemPage key={id} id={id} />;
+}
+
+function ItemPage({ id }: { id: string }) {
   const nav = useNavigate();
+  // A series' structure passes the series it was opened from; a deep link
+  // has none.
+  const from = fromItem(useLocation().state);
   const gql = useGql();
   const { data, loading, error, refetch } = useQuery<{ item: Item | null }>(ITEM_Q, { id }, [id]);
   const [tab, setTab] = useState('overview');
@@ -264,6 +274,7 @@ export function ItemDetail() {
 
   const TABS = [
     { value: 'overview', label: 'overview' },
+    ...(item.type === 'series' ? [{ value: 'episodes', label: 'Episodes' }] : []),
     { value: 'steps', label: `Steps (${item.processingSteps.length})` },
     { value: 'assets', label: `assets (${item.assets.length})` },
     { value: 'media', label: `segments (${item.segments.length})` },
@@ -275,8 +286,8 @@ export function ItemDetail() {
 
   return (
     <div>
-      <Button variant="ghost" size="sm" leading={<ArrowLeft size={14} />} onClick={() => nav('/')}>
-        catalog
+      <Button variant="ghost" size="sm" leading={<ArrowLeft size={14} />} onClick={() => nav(from ? `/item/${from.id}` : '/')}>
+        {from ? from.title : 'catalog'}
       </Button>
 
       <div className="kat__obj-head">
@@ -545,6 +556,7 @@ export function ItemDetail() {
 
       <div className="kat__facet">
         {tab === 'overview' && <Overview item={item} />}
+        {tab === 'episodes' && item.type === 'series' && <SeriesStructure seriesId={item.id} from={{ id: item.id, title: item.title }} />}
         {tab === 'steps' && <StepTimeline itemId={item.id} />}
         {tab === 'assets' && <AssetsTab assets={item.assets} />}
         {tab === 'media' && <SegmentsTab segments={item.segments} />}

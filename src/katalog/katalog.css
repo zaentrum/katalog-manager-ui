@@ -308,3 +308,45 @@ a.kat__rowlink:focus-visible {
   word-break: break-word;
 }
 
+/* a series' structure: seasons that open and close, their episodes */
+.kat__tree,
+.kat__tree-episodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.kat__tree-season {
+  border-bottom: 1px solid var(--border, #1f2633);
+}
+.kat__tree-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 4px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.kat__tree-toggle:hover,
+.kat__tree-toggle:focus-visible {
+  background: var(--surface, #11161f);
+}
+.kat__tree-episodes {
+  padding: 0 0 10px 22px;
+}
+.kat__tree-episode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 4px;
+  font-size: 13px;
+}
+.kat__tree-code {
+  min-width: 64px;
+  font-size: 12px;
+}
