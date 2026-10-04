@@ -75,6 +75,7 @@ test('a step’s retry: its next, due, none left, none scheduled, or sent again'
   assert.equal(retryState({ ...failed, nextRetryAt: at(-5) }, 3, NOW), 'retry due');
   assert.equal(retryState({ ...failed, failures: 3, nextRetryAt: null }, 3, NOW), 'no retry left');
   assert.equal(retryState({ ...failed, failures: 1, nextRetryAt: null }, 3, NOW), 'no automatic retry');
+  assert.equal(retryState({ ...failed, failures: 2, nextRetryAt: null }, 3, NOW), 'no automatic retry');
   assert.equal(retryState({ ...failed, failures: 4, nextRetryAt: null }, null, NOW), 'no automatic retry');
   assert.equal(retryState({ status: 'pending', failures: 1, nextRetryAt: null, dispatchedAt: at(-180) }, 3, NOW), 'sent again 3m ago');
   assert.equal(retryState({ status: 'pending', failures: 0, nextRetryAt: null, dispatchedAt: null }, 3, NOW), '');
