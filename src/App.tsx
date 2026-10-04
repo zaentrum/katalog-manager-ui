@@ -11,6 +11,7 @@ import { ItemDetail } from './katalog/ItemDetail';
 import { PersonDetail } from './katalog/PersonDetail';
 import { ScanView } from './katalog/ScanView';
 import { ActivityView } from './katalog/ActivityView';
+import { ProcessingView } from './katalog/ProcessingView';
 import { SettingsView } from './katalog/SettingsView';
 import { BASE_NOSLASH } from './lib/basepath';
 import { Splash } from './Splash';
@@ -101,6 +102,7 @@ function Console() {
             <Route index element={<ScanView />} />
             <Route path="scan" element={<ScanView />} />
             <Route path="activity" element={<ActivityView />} />
+            <Route path="processing" element={<ProcessingView />} />
             <Route path="settings" element={<SettingsView />} />
           </>
         ) : (

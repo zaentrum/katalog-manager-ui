@@ -272,3 +272,31 @@ a.kat__rowlink:focus-visible {
 .kat__keyedit > :first-child {
   flex: 1 1 auto;
 }
+
+/* processing tab: the retry policy's line, a section's head, a failed
+   count, a long error kept to its cell */
+.kat__policy {
+  font-size: 13px;
+  margin: -4px 0 12px;
+}
+.kat__section {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 22px 0 8px;
+}
+.kat__err-num {
+  color: var(--amber, #f2b233);
+  font-weight: 600;
+}
+.kat__clip {
+  display: inline-block;
+  max-width: 48ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 0;
+  font-size: 12px;
+}
+

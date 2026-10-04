@@ -8,12 +8,14 @@ import './katalog.css';
 const MANAGE_SECTIONS = [
   { value: 'scan', label: 'scan', path: '/scan' },
   { value: 'activity', label: 'activity', path: '/activity' },
+  { value: 'processing', label: 'Processing', path: '/processing' },
   { value: 'settings', label: 'settings', path: '/settings' },
 ];
 
 function manageSectionFor(pathname: string): string {
   if (pathname.startsWith('/settings')) return 'settings';
   if (pathname.startsWith('/activity')) return 'activity';
+  if (pathname.startsWith('/processing')) return 'processing';
   return 'scan';
 }
 
@@ -30,7 +32,7 @@ export function KatalogLayout({ mode }: { mode: 'catalog' | 'manage' }) {
           {manage ? 'catalog management' : 'katalog'}
         </Heading>
         <span className="kat__sub">
-          {manage ? 'scan & settings' : 'browse the catalog'}
+          {manage ? 'scan, processing & settings' : 'browse the catalog'}
         </span>
       </div>
       {manage && (
