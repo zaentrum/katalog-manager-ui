@@ -40,6 +40,16 @@ These need a katalog-manager with the step retries (its `processingOverview`,
 `retryPolicy`, `retryStep` and `retryFailed`): deploy it first. Against an
 older one the rest of the console works, and these say they cannot read.
 
+The page of a movie, an episode or a series has **Re-encode**, which asks
+first: it encodes the title again (a series' episodes that have a file) with
+the instance's current pipeline settings, the transcoder's ladder and encoder
+and then the packager's (katalog-manager's `reencodeItem`), and says what it
+did. Its current package plays while it is encoded; once it is packaged again
+it plays by on-demand transcoding until the new package is complete. A title
+whose transcode or package is running is left alone, and the dialog stays
+open saying why. It needs a katalog-manager with `reencodeItem`: deploy that
+first, as against an older one the dialog says the field is unknown.
+
 ## Runtime-configurable mount path
 
 The image is built once with a `/__BASE__/` placeholder base. The container
