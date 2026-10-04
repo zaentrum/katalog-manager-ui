@@ -15,7 +15,7 @@ import {
   Checkbox,
 } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { ArrowLeft, Sparkles, Package, CheckCircle2, Search, Pencil, Lock, Unlock, Trash2 } from 'lucide-react';
+import { ArrowLeft, Sparkles, Package, CheckCircle2, Search, Pencil, Lock, Unlock, Trash2, FileVideo } from 'lucide-react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useArtwork } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
@@ -25,6 +25,7 @@ import { fromItem, hasEpisodeCounts } from './people';
 import { SeriesStructure } from './SeriesStructure';
 import { StepTimeline } from './StepTimeline';
 import { confirmsTitle, deletesFromDisk, deletionNotice, type DeleteResult } from './deletion';
+import { canReencode, reencodeExplainer, reencodeNotice, reencodeStarted, type ReencodeResult } from './reencode';
 
 interface Step {
   step: string;
@@ -116,6 +117,8 @@ const ITEM_Q = `query Item($id: ID!) {
   }
 }`;
 
+const REENCODE = `mutation($id:ID!){ reencodeItem(id:$id){ itemId titles reencoded busy notSent message } }`;
+
 function ms(t: number): string {
   const s = Math.floor(t / 1000);
   const m = Math.floor(s / 60);
@@ -154,6 +157,8 @@ function ItemPage({ id }: { id: string }) {
   const [delPackages, setDelPackages] = useState(false);
   const [delTyped, setDelTyped] = useState('');
   const [delErr, setDelErr] = useState<string | null>(null);
+  const [reOpen, setReOpen] = useState(false);
+  const [reErr, setReErr] = useState<string | null>(null);
 
   const item = data?.item;
   // The poster takes the bearer token like any API call (see useArtwork).
@@ -258,6 +263,29 @@ function ItemPage({ id }: { id: string }) {
       nav('/', { replace: true, state: { deleted: deletionNotice(item.title, asked, d.deleteItem) } });
     } catch (e) {
       setDelErr(e instanceof Error ? e.message : String(e));
+      setBusy(null);
+    }
+  }
+
+  // Encode the title again (a series' episodes) with the instance's current
+  // pipeline settings. One that started closes the dialog and says what
+  // katalog-manager did; one that started nothing (the title busy, no file,
+  // its event not sent) or failed keeps it open with why.
+  async function submitReencode() {
+    setBusy('reencode');
+    setReErr(null);
+    try {
+      const d = await gql<{ reencodeItem: ReencodeResult }>(REENCODE, { id });
+      if (reencodeStarted(d.reencodeItem)) {
+        setReOpen(false);
+        setMsg(reencodeNotice(d.reencodeItem));
+        refetch();
+      } else {
+        setReErr(d.reencodeItem.message);
+      }
+    } catch (e) {
+      setReErr(e instanceof Error ? e.message : String(e));
+    } finally {
       setBusy(null);
     }
   }
@@ -534,6 +562,46 @@ function ItemPage({ id }: { id: string }) {
             >
               package
             </Button>
+            {canReencode(item.type) && (
+              <Button
+                size="sm"
+                variant="default"
+                leading={<FileVideo size={14} />}
+                onClick={() => {
+                  setReErr(null);
+                  setMsg(null);
+                  setReOpen(true);
+                }}
+              >
+                Re-encode
+              </Button>
+            )}
+            {reOpen && (
+              <Modal
+                open
+                onClose={() => setReOpen(false)}
+                title="Re-encode"
+                footer={
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => setReOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" leading={<FileVideo size={13} />} loading={busy === 'reencode'} onClick={() => void submitReencode()}>
+                      Re-encode{item.type === 'series' ? ' Episodes' : ''}
+                    </Button>
+                  </>
+                }
+              >
+                <div className="kat__form">
+                  {reencodeExplainer(item.type, item.title).map((p) => (
+                    <Text key={p} variant="muted">
+                      {p}
+                    </Text>
+                  ))}
+                  {reErr && <div className="kat__err">{reErr}</div>}
+                </div>
+              </Modal>
+            )}
             <Button
               size="sm"
               variant="default"
