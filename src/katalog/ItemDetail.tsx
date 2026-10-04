@@ -22,6 +22,7 @@ import { useQuery } from '../lib/useQuery';
 import { useGql } from '../lib/gql';
 import { statusTone } from './status';
 import { hasEpisodeCounts } from './people';
+import { StepTimeline } from './StepTimeline';
 import { confirmsTitle, deletesFromDisk, deletionNotice, type DeleteResult } from './deletion';
 
 interface Step {
@@ -263,7 +264,7 @@ export function ItemDetail() {
 
   const TABS = [
     { value: 'overview', label: 'overview' },
-    { value: 'steps', label: `steps (${item.processingSteps.length})` },
+    { value: 'steps', label: `Steps (${item.processingSteps.length})` },
     { value: 'assets', label: `assets (${item.assets.length})` },
     { value: 'media', label: `segments (${item.segments.length})` },
     { value: 'chapters', label: `chapters (${item.chapters.length})` },
@@ -544,7 +545,7 @@ export function ItemDetail() {
 
       <div className="kat__facet">
         {tab === 'overview' && <Overview item={item} />}
-        {tab === 'steps' && <StepsTab steps={item.processingSteps} />}
+        {tab === 'steps' && <StepTimeline itemId={item.id} />}
         {tab === 'assets' && <AssetsTab assets={item.assets} />}
         {tab === 'media' && <SegmentsTab segments={item.segments} />}
         {tab === 'chapters' && <ChaptersTab chapters={item.chapters} />}
@@ -573,16 +574,6 @@ function Overview({ item }: { item: Item }) {
       </dd>
     </dl>
   );
-}
-
-function StepsTab({ steps }: { steps: Step[] }) {
-  const cols: TableColumn<Step>[] = [
-    { key: 'step', header: 'step', render: (r) => <span className="kat__mono">{r.step}</span> },
-    { key: 'status', header: 'status', render: (r) => <Badge tone={statusTone(r.status)}>{r.status}</Badge> },
-    { key: 'attempts', header: 'tries', align: 'right', render: (r) => r.attempts ?? 0 },
-    { key: 'error', header: 'error', render: (r) => r.error || <span className="kat__muted">—</span> },
-  ];
-  return <Table columns={cols} rows={steps} rowKey={(r) => r.step} dense empty={<Text variant="muted">no steps.</Text>} />;
 }
 
 function AssetsTab({ assets }: { assets: Asset[] }) {

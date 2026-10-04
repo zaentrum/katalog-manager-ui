@@ -300,3 +300,11 @@ a.kat__rowlink:focus-visible {
   font-size: 12px;
 }
 
+/* an item's step timeline: a step's error under its line */
+.kat__step .kat__step-err {
+  padding: 2px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
