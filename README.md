@@ -50,6 +50,22 @@ whose transcode or package is running is left alone, and the dialog stays
 open saying why. It needs a katalog-manager with `reencodeItem`: deploy that
 first, as against an older one the dialog says the field is unknown.
 
+## Track languages
+
+The page of a movie or an episode has **Tracks**: the audio and subtitle
+tracks of the title's source, each with the language its source tags it
+with, the one an admin set and the one it plays as (`zxx` reads "No
+dialogue", `und` "Unknown"). **Set Language** sets a track's language, from
+the common languages, no dialogue, unknown or another ISO 639-2 code of three
+letters, or clears it so the track plays as its source says
+(katalog-manager's `setTrackLanguage`). The title's package takes it when the
+title is packaged again: **Re-encode**. The tracks are those a package of the
+title reported; a title packaged before katalog-manager kept them lists none
+until katalog-manager's `backfillSourceTracks` has read them from its
+package. It needs a katalog-manager with `tracks` and `setTrackLanguage`:
+against an older one the tab says it cannot read them, and the rest of the
+page works.
+
 ## Runtime-configurable mount path
 
 The image is built once with a `/__BASE__/` placeholder base. The container
