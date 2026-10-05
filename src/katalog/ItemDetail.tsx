@@ -26,6 +26,8 @@ import { SeriesStructure } from './SeriesStructure';
 import { StepTimeline } from './StepTimeline';
 import { confirmsTitle, deletesFromDisk, deletionNotice, type DeleteResult } from './deletion';
 import { canReencode, reencodeExplainer, reencodeNotice, reencodeStarted, type ReencodeResult } from './reencode';
+import { TrackLanguages } from './TrackLanguages';
+import { hasTracks } from './tracks';
 
 interface Step {
   step: string;
@@ -305,6 +307,7 @@ function ItemPage({ id }: { id: string }) {
     ...(item.type === 'series' ? [{ value: 'episodes', label: 'Episodes' }] : []),
     { value: 'steps', label: `Steps (${item.processingSteps.length})` },
     { value: 'assets', label: `assets (${item.assets.length})` },
+    ...(hasTracks(item.type) ? [{ value: 'tracks', label: 'Tracks' }] : []),
     { value: 'media', label: `segments (${item.segments.length})` },
     { value: 'chapters', label: `chapters (${item.chapters.length})` },
     { value: 'trailers', label: `trailers (${item.trailerLinks.length})` },
@@ -627,6 +630,7 @@ function ItemPage({ id }: { id: string }) {
         {tab === 'episodes' && item.type === 'series' && <SeriesStructure seriesId={item.id} from={{ id: item.id, title: item.title }} />}
         {tab === 'steps' && <StepTimeline itemId={item.id} />}
         {tab === 'assets' && <AssetsTab assets={item.assets} />}
+        {tab === 'tracks' && hasTracks(item.type) && <TrackLanguages itemId={item.id} />}
         {tab === 'media' && <SegmentsTab segments={item.segments} />}
         {tab === 'chapters' && <ChaptersTab chapters={item.chapters} />}
         {tab === 'trailers' && <TrailersTab trailers={item.trailerLinks} />}
