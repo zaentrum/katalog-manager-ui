@@ -46,6 +46,11 @@ server {
   listen 8080 default_server;
   server_name _;
 
+  # Redirects (e.g. ${BASE_PATH%/} -> ${BASE_PATH}) are relative: an absolute
+  # one would carry this container's own scheme and port (http://host:8080),
+  # which the TLS edge in front of it does not rewrite.
+  absolute_redirect off;
+
   root ${HTML};
   index index.html;
 
