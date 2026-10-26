@@ -24,30 +24,47 @@ let seed = 20261026;
 const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const between = (a, b) => a + rand() * (b - a);
 const round1 = (n) => Math.round(n * 10) / 10;
-// sizes as the server writes them in its sentences: decimal, one decimal
-const gb = (bytes) => `${round1(bytes / GB)} GB`;
+const fmt = (n) => n.toLocaleString('en-US');
+// sizes and bit rates as the server writes them in its sentences: decimal,
+// one decimal and no trailing zero, a no-break space before the unit
+const NB = '\u00a0';
+const gb = (bytes) => `${round1(bytes / GB)}${NB}GB`;
+const mbps = (n) => `${round1(n)}${NB}Mbit/s`;
+// "a and b", "a, b and c"
+const list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
-// the rules the workers report; the findings read their limits from here
+// the rules the workers report, in words, the raw config under details; the
+// findings read their limits from here
 const CAPS = { movie: { 1080: 8, 2160: 14 }, episode: { 1080: 6, 2160: 8 } };
 const SIZE_CAP = 15 * GiB;
+const reported = (key, label, value, detail = null) => ({ key, label, value, detail });
 const TRANSCODER = {
   worker: 'transcoder',
   version: '0.9.0',
   rules: [
-    { key: 'movie.cap.1080', label: 'Movie video at 1080p', value: `${CAPS.movie[1080]} Mbit/s` },
-    { key: 'movie.cap.2160', label: 'Movie video at 2160p', value: `${CAPS.movie[2160]} Mbit/s` },
-    { key: 'movie.cap.size', label: 'Movie size', value: gb(SIZE_CAP) },
-    { key: 'episode.cap.1080', label: 'Episode video at 1080p', value: `${CAPS.episode[1080]} Mbit/s` },
-    { key: 'episode.cap.2160', label: 'Episode video at 2160p', value: `${CAPS.episode[2160]} Mbit/s` },
-    { key: 'encode.codec', label: 'Encoded video', value: 'HEVC' },
+    reported('caps.movie1080Mbps', 'Video bit rate, 1080p movies', `at most ${mbps(CAPS.movie[1080])}`),
+    reported('caps.movie2160Mbps', 'Video bit rate, 2160p movies', `at most ${mbps(CAPS.movie[2160])}`),
+    reported('caps.movieMaxGiB', 'File size, movies', `at most ${gb(SIZE_CAP)} (15${NB}GiB)`),
+    reported('caps.episode1080Mbps', 'Video bit rate, 1080p episodes', `at most ${mbps(CAPS.episode[1080])}`),
+    reported('caps.episode2160Mbps', 'Video bit rate, 2160p episodes', `at most ${mbps(CAPS.episode[2160])}`),
+    reported('bucket2160.minHeight', '2160p from a height of', '2,000 pixels'),
+    reported('bucket2160.minWidth', '2160p from a width of', '3,200 pixels'),
+    reported('encoder.codec', 'Encoder', 'hevc_nvenc'),
+    reported('encoder.preset', 'Encoder preset', 'p5'),
+    reported('encoder.cq', 'Constant quality', '23'),
+    reported('encoder.maxrate1080Mbps', 'Encode bit rate, 1080p', 'up to the caps above'),
+    reported('encoder.maxrate2160Mbps', 'Encode bit rate, 2160p', 'up to the caps above'),
+    reported('ladder', 'Renditions', 'one, at the original’s size, in HEVC', 'source:hevc'),
+    reported('extraLadder', 'Renditions of extras', 'one, at the original’s size, in HEVC', 'source:hevc'),
   ],
 };
 const PACKAGER = {
   worker: 'packager',
   version: '0.7.2',
   rules: [
-    { key: 'audio.surround', label: 'Surround track', value: '5.1' },
-    { key: 'subtitles.image', label: 'Image subtitles', value: 'Carried' },
+    reported('surroundAudio', 'Surround track', `5.1 E-AC-3, 448${NB}kbit/s`),
+    reported('stereoBitrate', 'Stereo track', `192${NB}kbit/s`),
+    reported('imageSubtitles', 'Image subtitles kept', 'PGS, VobSub'),
   ],
 };
 const hoursAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
@@ -56,35 +73,84 @@ let evaluatedAt = hoursAgo(1.4);
 let checkUntil = 0;
 
 // the findings in the server's words: the reason, with the limit read from
-// the rules above
+// the rules above; a tool's output or a codec's id is the detail, never in
+// the sentence
+const pick = (xs) => xs[Math.floor(rand() * xs.length)];
+const LANGUAGES = ['German', 'French', 'Italian', 'Japanese', 'Spanish', 'Portuguese (Brazil)', 'Chinese (Simplified)'];
 const finding = {
-  bitrate: (mbit, cap, h) => ({
-    rule: 'OVER_BITRATE_CAP',
-    text: `Video at ${mbit} Mbit/s, above the ${cap} Mbit/s the transcoder allows at ${h}p`,
-    measured: `${mbit} Mbit/s`,
-    limit: `${cap} Mbit/s`,
-  }),
-  size: (bytes) => ({
+  // measured from the package's bit rate, or, where it gives none, from its
+  // size: "about"
+  bitrate: (mbit, cap, h, kind) => {
+    const about = rand() < 0.3 ? 'about ' : '';
+    return {
+      rule: 'OVER_BITRATE_CAP',
+      text: `The video runs at ${about}${mbps(mbit)}, above the ${mbps(cap)} the transcoder allows for a ${h}p ${kind}.`,
+      measured: `${about}${mbps(mbit)}`,
+      limit: mbps(cap),
+      detail: null,
+    };
+  },
+  size: () => ({
     rule: 'OVER_SIZE_CAP',
-    text: `Package above the ${gb(SIZE_CAP)} the transcoder allows`,
-    measured: gb(bytes),
+    text: `The original is larger than the ${gb(SIZE_CAP)} the transcoder allows for a movie, and the package copied its video.`,
+    measured: null,
     limit: gb(SIZE_CAP),
+    detail: null,
   }),
-  hevc: () => ({ rule: 'VIDEO_NOT_HEVC', text: 'Video in H.264; the transcoder encodes HEVC', measured: 'H.264', limit: 'HEVC' }),
-  surround: () => ({ rule: 'NO_SURROUND', text: 'No 5.1 track in the package; the original has 7.1', measured: '2.0', limit: '5.1' }),
-  images: (n) => ({
-    rule: 'IMAGE_SUBTITLES_MISSING',
-    text: `${n} image subtitle ${n === 1 ? 'track' : 'tracks'} of the original ${n === 1 ? 'isn’t' : 'aren’t'} in the package`,
-    measured: `0 of ${n}`,
-    limit: `${n} of ${n}`,
+  hevc: () => ({
+    rule: 'VIDEO_NOT_HEVC',
+    text: 'The video is H.264, and the transcoder makes every video HEVC.',
+    measured: 'H.264',
+    limit: 'HEVC',
+    detail: 'avc1.640028',
   }),
-  unpackaged: () => ({ rule: 'NOT_PACKAGED', text: 'Not packaged', measured: null, limit: null }),
-  failed: () => ({ rule: 'PACKAGING_FAILED', text: 'Packaging failed on its last attempt', measured: null, limit: null }),
+  surround: () => {
+    const channels = pick([6, 8]);
+    return {
+      rule: 'NO_SURROUND',
+      text: `The package has 2 audio channels, and the original has ${channels}. The 5.1 E-AC-3 track the packager makes is missing.`,
+      measured: '2 channels',
+      limit: '5.1 E-AC-3',
+      detail: null,
+    };
+  },
+  images: (n) => {
+    const langs = [...LANGUAGES].sort(() => rand() - 0.5).slice(0, n);
+    return {
+      rule: 'IMAGE_SUBTITLES_MISSING',
+      text: `The original’s PGS subtitles in ${list(langs)} are missing from the package. The packager keeps PGS subtitles.`,
+      measured: langs.join(', '),
+      limit: 'PGS, VobSub',
+      detail: null,
+    };
+  },
+  unpackaged: () => ({
+    rule: 'NOT_PACKAGED',
+    text: pick([
+      'It has no package, and none is being made.',
+      'It was taken in without a package and plays from its original.',
+      'Its transcode and packaging finished, and no package is recorded.',
+    ]),
+    measured: null,
+    limit: null,
+    detail: null,
+  }),
+  failed: () => {
+    const [text, detail] = pick([
+      ['The transcoder failed.', 'ffmpeg exited 1'],
+      ['The packager failed, and tries again by itself.', 'shaka-packager exited 1'],
+      ['The transcoder left it as it is: Dolby Vision profile 7 needs a tone-mapping encode.', null],
+      ['The packager skipped it: the original has no video.', null],
+    ]);
+    return { rule: 'PACKAGING_FAILED', text, measured: null, limit: null, detail };
+  },
 };
 
 // what a title takes at most under a cap: its video at the cap and a 5.1
 // track, a movie within the size cap too
 const atMost = (minutes, capMbit, sizeCap = Infinity) => Math.min(sizeCap, (minutes * 60 * (capMbit + 0.64) * 1e6) / 8);
+// a package's video bit rate, from its size and the title's length
+const mbitOf = (bytes, minutes) => round1((bytes * 8) / (minutes * 60) / 1e6);
 
 const FIRST = ['Vell', 'Quill', 'Okker', 'Bran', 'Mirr', 'Tars', 'Kest', 'Arv', 'Salt', 'Wen', 'Ferr', 'Ils', 'Dun', 'Calv',
   'Orr', 'Thorn', 'Lund', 'Bram', 'Cair', 'Gald', 'Hesk', 'Jorr', 'Nesb', 'Oss', 'Rudd', 'Skel', 'Tyv'];
@@ -104,23 +170,23 @@ function movies() {
       // a near-copy of a 4K remux
       row.originalBytes = between(42, 78) * GiB;
       row.packageBytes = row.originalBytes * between(0.9, 0.98);
-      row.findings = [finding.bitrate(Math.round((row.packageBytes * 8) / (minutes * 60) / 1e6), CAPS.movie[2160], 2160), finding.size(row.packageBytes)];
+      row.findings = [finding.bitrate(mbitOf(row.packageBytes, minutes), CAPS.movie[2160], 2160, 'movie'), finding.size()];
       row.estimatedBytes = atMost(minutes, CAPS.movie[2160], SIZE_CAP);
     } else if (p < 0.65) {
       // a near-copy of a 1080p remux, some of them H.264
       row.originalBytes = between(11, 36) * GiB;
       row.packageBytes = row.originalBytes * between(0.9, 0.98);
-      row.findings = [finding.bitrate(Math.round((row.packageBytes * 8) / (minutes * 60) / 1e6), CAPS.movie[1080], 1080)];
-      if (row.packageBytes > SIZE_CAP) row.findings.push(finding.size(row.packageBytes));
+      row.findings = [finding.bitrate(mbitOf(row.packageBytes, minutes), CAPS.movie[1080], 1080, 'movie')];
+      if (row.packageBytes > SIZE_CAP) row.findings.push(finding.size());
       if (rand() < 0.5) row.findings.push(finding.hevc());
       row.estimatedBytes = atMost(minutes, CAPS.movie[1080], SIZE_CAP);
     } else if (p < 0.77) {
       row.originalBytes = between(9, 30) * GiB;
-      row.packageBytes = between(6, 14) * GiB;
+      row.packageBytes = row.originalBytes * between(0.4, 0.8);
       row.findings = [finding.surround()];
     } else if (p < 0.85) {
       row.originalBytes = between(9, 30) * GiB;
-      row.packageBytes = between(6, 14) * GiB;
+      row.packageBytes = row.originalBytes * between(0.4, 0.8);
       row.findings = [finding.images(1 + Math.floor(rand() * 3))];
       if (rand() < 0.4) row.findings.unshift(finding.surround());
     } else if (p < 0.92) {
@@ -160,7 +226,7 @@ function episodes() {
         const cap = s.uhd ? CAPS.episode[2160] : CAPS.episode[1080];
         const row = { itemId: `${s.id}e${season}${String(episode).padStart(2, '0')}`, title: `Chapter ${episode}`, year: null,
           kind: 'EPISODE', seriesId: s.id, seriesTitle: s.title, season, episode,
-          findings: [finding.bitrate(Math.round((pkg * 8) / (minutes * 60) / 1e6), cap, s.uhd ? 2160 : 1080)],
+          findings: [finding.bitrate(mbitOf(pkg, minutes), cap, s.uhd ? 2160 : 1080, 'episode')],
           originalBytes: original, packageBytes: pkg, estimatedBytes: atMost(minutes, cap), queue: null };
         if (!s.uhd && rand() < 0.3) row.findings.push(finding.surround());
         rows.push(row);
@@ -170,17 +236,49 @@ function episodes() {
   return rows;
 }
 
-const library = [...movies(), ...episodes()].map((r) => ({ ...r, queueReason: null, evaluatedAt }));
-// a few titles in the queue already; one whose processing failed, and why
-for (const [i, q] of [[3, 'sent'], [5, 'queued'], [8, 'queued'], [12, 'queued'], [20, 'failed'], [31, 'done'], [240, 'sent']]) {
-  if (library[i]) library[i].queue = q;
-}
-library[20].queueReason = 'the transcoder couldn’t read the original';
-// a few movies whose original is gone: the queue doesn't take them (the
-// second biggest package among them, so the list shows one at the top)
+const library = [...movies(), ...episodes()].map((r) => ({ ...r, queueReason: null, queueDetail: null, blocked: null, evaluatedAt }));
 const byPackage = library.filter((r) => r.kind === 'MOVIE' && r.packageBytes).sort((a, b) => b.packageBytes - a.packageBytes);
-for (const i of [1, 6, 15]) byPackage[i].noFile = 'its original was deleted after packaging';
-byPackage[1].queue = null;
+
+// why the queue doesn't take a title, as the server says it: of one title,
+// of all of them, and of some among others
+const BLOCKED = {
+  deleted: {
+    one: 'its original was deleted after packaging',
+    all: 'their originals were deleted after packaging',
+    some: (n) => (n === 1 ? 'the original of 1 was deleted after packaging' : `the originals of ${fmt(n)} were deleted after packaging`),
+  },
+  noFile: { one: 'it has no file', all: 'they have no file', some: (n) => `${fmt(n)} ${n === 1 ? 'has' : 'have'} no file` },
+  disc: { one: 'its file is a disc image', all: 'their files are disc images', some: (n) => (n === 1 ? '1 is a disc image' : `${fmt(n)} are disc images`) },
+  unknown: { one: 'it is not in the catalog', all: 'they are not in the catalog', some: (n) => `${fmt(n)} ${n === 1 ? 'is' : 'are'} not in the catalog` },
+};
+// a few movies the queue doesn't take (the second biggest package among
+// them, so the list shows one at the top), one of them a disc image whose
+// packaging failed
+byPackage[1].blocked = 'deleted';
+byPackage[6].blocked = 'deleted';
+byPackage[15].blocked = 'noFile';
+const disc = library.find((r) => r.kind === 'MOVIE' && r.findings.some((f) => f.rule === 'PACKAGING_FAILED'));
+if (disc) {
+  disc.blocked = 'disc';
+  disc.findings = [{ rule: 'PACKAGING_FAILED', text: 'Its file is a disc image, which the transcoder doesn’t encode.', measured: null, limit: null, detail: null }];
+}
+
+// a few titles in the queue already, each with what it waits for
+const WAITING = 'It is waiting for the transcoder.';
+for (const [i, q, why] of [
+  [3, 'sent', 'The transcoder is working on it.'],
+  [5, 'queued', WAITING],
+  [8, 'queued', WAITING],
+  [12, 'queued', WAITING],
+  [31, 'done', null],
+  [240, 'sent', 'It is waiting for the packager.'],
+]) {
+  if (library[i] && !library[i].blocked) Object.assign(library[i], { queue: q, queueReason: why });
+}
+// and one whose processing failed: the reason, and the tool's output for
+// under details
+const h264 = byPackage.find((r) => !r.queue && !r.blocked && r.findings.some((f) => f.rule === 'VIDEO_NOT_HEVC'));
+Object.assign(h264, { queue: 'failed', queueReason: 'The transcoder failed.', queueDetail: 'ffmpeg exited 1' });
 
 // a title as the server names it in its answers
 const nameOf = (r) =>
@@ -219,7 +317,8 @@ function compliance(vars, scenario) {
     transcoder: scenario === 'unreported' ? null : { ...TRANSCODER, reportedAt: reportedAt.transcoder },
     packager: { ...PACKAGER, reportedAt: reportedAt.packager },
   };
-  const notEvaluated = scenario === 'unreported' ? ['The transcoder hasn’t reported its rules, so its caps aren’t checked.'] : [];
+  const notEvaluated =
+    scenario === 'unreported' ? ['The transcoder hasn’t reported its rules, so bit rates, file sizes and the video format can’t be checked.'] : [];
   const titles = asked(vars, scenario);
   const summary = [];
   for (const rule of ['NOT_PACKAGED', 'PACKAGING_FAILED', 'OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING', 'VIDEO_NOT_HEVC']) {
@@ -252,9 +351,10 @@ function compliance(vars, scenario) {
     evaluating,
     total: matching.length,
     // the totals over every title that matches, not only the page, and over
-    // those of them the queue doesn't hold
+    // those of them the queue would take: not in it, and none processing
+    // again can't help
     matching: totals(matching),
-    queueable: totals(matching.filter((r) => !inQueue(r))),
+    queueable: totals(matching.filter(queueable)),
     queue: queueCounts(),
     summary,
     rows: matching.slice(offset, offset + first),
@@ -271,27 +371,49 @@ function queueCounts() {
 }
 
 const inQueue = (r) => r.queue === 'queued' || r.queue === 'sent';
+const queueable = (r) => !inQueue(r) && !r.blocked;
 
 // queueRework and queueReworkMatching: a title waiting or sent stays as it
-// is; one whose original is gone, or that isn't in the library, is skipped
-// with its reason
-function enqueue(rows, unknown = []) {
+// is; one the queue doesn't take, or that isn't in the library, is skipped
+// with its reason. Each count is said too, null when there is nothing to
+// say; nothing asked for says why nothing was queued (empty).
+function enqueue(rows, unknown = [], empty = null) {
   let queued = 0;
   let already = 0;
-  const skippedTitles = unknown.map((itemId) => ({ itemId, title: itemId, reason: 'it isn’t in the catalog' }));
+  const skips = unknown.map((itemId) => ({ itemId, title: itemId, why: 'unknown' }));
   for (const r of rows) {
     if (inQueue(r)) already++;
-    else if (r.noFile) skippedTitles.push({ itemId: r.itemId, title: nameOf(r), reason: r.noFile });
+    else if (r.blocked) skips.push({ itemId: r.itemId, title: nameOf(r), why: r.blocked });
     else {
-      r.queue = 'queued';
-      r.queueReason = null;
+      Object.assign(r, { queue: 'queued', queueReason: WAITING, queueDetail: null });
       queued++;
     }
   }
-  const parts = [`${queued} queued`];
-  if (already) parts.push(`${already} in the queue already`);
-  if (skippedTitles.length) parts.push(`${skippedTitles.length} skipped`);
-  return { queued, alreadyQueued: already, skipped: skippedTitles.length, skippedTitles, message: parts.join(' · ') };
+  const titles = (n) => `${fmt(n)} ${n === 1 ? 'title' : 'titles'}`;
+  const queuedText = queued ? `${titles(queued)} queued to be processed again` : null;
+  const alreadyText = already ? `${titles(already)} already in the queue` : null;
+  let notQueuedText = null;
+  if (skips.length) {
+    // by reason, in the order BLOCKED says them
+    const by = new Map(Object.keys(BLOCKED).map((why) => [why, skips.filter((x) => x.why === why).length]).filter(([, k]) => k));
+    const n = skips.length;
+    const head = `${titles(n)} ${n === 1 ? 'wasn’t' : 'weren’t'} queued`;
+    notQueuedText = by.size === 1
+      ? `${head}: ${n === 1 ? BLOCKED[skips[0].why].one : BLOCKED[skips[0].why].all}.`
+      : `${head}: ${list([...by].map(([why, k]) => BLOCKED[why].some(k)))}.`;
+  } else if (!queued && !already && empty) {
+    notQueuedText = `Nothing was queued: ${empty}.`;
+  }
+  return {
+    queued,
+    alreadyQueued: already,
+    skipped: skips.length,
+    skippedTitles: skips.map((x) => ({ itemId: x.itemId, title: x.title, reason: BLOCKED[x.why].one })),
+    message: [queuedText, alreadyText, notQueuedText].filter(Boolean).join(' · '),
+    queuedText,
+    alreadyText,
+    notQueuedText,
+  };
 }
 
 const setting = (id, key, valueText, valueType, description) => ({
@@ -321,15 +443,15 @@ function reencodeQueue() {
 function answer(query, vars, scenario) {
   const data = {};
   if (/\bqueueReworkMatching\s*\(/.test(query)) {
-    // exactly the matches the queue doesn't hold (queueable)
-    const ids = new Set(matchingOf(asked(vars, scenario), vars).filter((r) => !inQueue(r)).map((r) => r.itemId));
-    data.queueReworkMatching = enqueue(library.filter((r) => ids.has(r.itemId)));
+    // exactly the matches queueable sums up
+    const ids = new Set(matchingOf(asked(vars, scenario), vars).filter(queueable).map((r) => r.itemId));
+    data.queueReworkMatching = enqueue(library.filter((r) => ids.has(r.itemId)), [], 'no title fits the filter anymore');
     return { data };
   }
   if (/\bqueueRework\s*\(/.test(query)) {
     const items = vars.items ?? [];
     const rows = library.filter((r) => items.includes(r.itemId));
-    data.queueRework = enqueue(rows, items.filter((id) => !rows.some((r) => r.itemId === id)));
+    data.queueRework = enqueue(rows, items.filter((id) => !rows.some((r) => r.itemId === id)), 'no title was selected');
     return { data };
   }
   if (/\brefreshCompliance\b/.test(query)) {
