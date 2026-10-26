@@ -49,6 +49,24 @@
   box-sizing: border-box;
 }
 
+/* on a phone: the portal shell's narrower gutters, and the crumb goes where
+   it does not fit beside the account (the page's heading names the app), so
+   the top bar is no wider than the screen */
+@media (max-width: 720px) {
+  .sh__bar {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .sh__main {
+    padding: 16px 12px 32px;
+  }
+}
+@media (max-width: 480px) {
+  .sh__crumb {
+    display: none;
+  }
+}
+
 .sh--center { align-items: center; justify-content: center; }
 .splash {
   display: flex;
