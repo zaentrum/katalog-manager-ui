@@ -11,6 +11,17 @@
 .kat__body {
   margin-top: 20px;
 }
+/* the section tabs scroll sideways where they do not fit, as on a phone, so
+   the page never grows wider than the screen; the list keeps its hairline
+   under every tab */
+.kat__tabs {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.kat__tabs .nc-tabs__list {
+  min-width: max-content;
+}
 
 /* filter bar */
 .kat__filters {

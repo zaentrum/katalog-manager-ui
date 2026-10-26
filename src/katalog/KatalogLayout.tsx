@@ -36,14 +36,16 @@ export function KatalogLayout({ mode }: { mode: 'catalog' | 'manage' }) {
         </span>
       </div>
       {manage && (
-        <Tabs
-          items={MANAGE_SECTIONS.map((s) => ({ value: s.value, label: s.label }))}
-          value={active}
-          onChange={(v) => {
-            const s = MANAGE_SECTIONS.find((x) => x.value === v);
-            if (s) nav(s.path);
-          }}
-        />
+        <div className="kat__tabs">
+          <Tabs
+            items={MANAGE_SECTIONS.map((s) => ({ value: s.value, label: s.label }))}
+            value={active}
+            onChange={(v) => {
+              const s = MANAGE_SECTIONS.find((x) => x.value === v);
+              if (s) nav(s.path);
+            }}
+          />
+        </div>
       )}
       <div className="kat__body">
         <Outlet />
