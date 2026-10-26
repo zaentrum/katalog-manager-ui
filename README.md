@@ -71,6 +71,14 @@ back with its count once the worker reports. Then each worker's rules as it
 reported them, in words with the raw config under details, and when, or
 that it never did.
 
+Until the check has looked at a title, the tab is only that the titles
+haven't been checked, with **check the titles**: no summary, rules in force
+or filters, which come once it has. katalog-manager's `evaluatedAt` is of
+the filter's kind and search, none for a search that matches no title, so
+whether the check has looked at any title is the unfiltered read's
+`checkedTitles`: a search that matches nothing reads as no matches, the
+check's line kept, with the time of every title's check.
+
 The titles follow, movies by default, filtered by kind, rules and a search
 ("230 of 279" while something filters), a hundred at a time, a row each with
 its measures in columns: the title, the video's resolution, codec and bit
