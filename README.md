@@ -59,69 +59,78 @@ it runs. At the top, one line says when the check ran, how many titles it
 checked and how many break a rule (`checkedTitles`), with **check again**
 (`refreshCompliance`); a banner says what the report leaves out. Then how
 many titles break each rule, by the rule's tag, with their packages' size
-now and at most after (a rule lists its titles alone), and the re-encode
-queue in numbers: queued, processing, needs attention and processed again.
-Then each worker's rules as it reported them, in words with the raw config
-under details, and when, or that it never did.
+now and the check's estimate of it after ("≈ after"; a rule lists its titles
+alone), and the re-encode queue in numbers: queued, processing, needs
+attention and processed again. Then each worker's rules as it reported them,
+in words with the raw config under details, and when, or that it never did.
 
 The titles follow, movies by default, filtered by kind, rules and a search
-("230 of 279"), a hundred at a time, a row each with its measures in
-columns: the title, the video's resolution, codec and bit rate ("≈" where it
-is worked out from the size and the duration), the transcoder's cap for its
-kind and height, the sizes of its original, its package, its package at most
-after and the saving (less than nothing, with its sign, where the package
-may grow), the package's audio (the original's on hover), the rules it
-breaks as tags ("bit rate > cap", "copy > 15 GiB", the size cap as the
-transcoder reported it), what processing it again does ("re-encode",
-"repackage", "first package", or "blocked" for a title it can't help,
-`reworkBlocked`), and its status with the queue's reason. Numbers sit to the
-right in figures of one width. A row's details open under it: each finding
-in katalog-manager's words with its technical part (a codec's id, a tool's
-output), why it is blocked, the queue's technical part and the original's
-audio. The headers of the title, the bit rate, the original, the package
-(the first order, the biggest first) and the saving sort the report on
-katalog-manager (`sort`, `descending`): the pages and the CSV come in the
-same order. **download csv** saves every title the filter matches, in that
-order, from katalog-manager's `GET /api/manage/compliance.csv`, under the
-name katalog-manager gives it, of the kind and when the check ran, in UTC
-(`rules-movies-2026-10-26T1343Z.csv`). The filters and the table take more
-of a wide screen than the column above them; on a narrow one the table
+("230 of 279" while something filters), a hundred at a time, a row each with
+its measures in columns: the title, the video's resolution, codec and bit
+rate ("≈" where it is worked out from the size and the duration), the
+transcoder's cap for its kind and height, the sizes of its original, its
+package, the estimate after ("≈ 11.9 GB") and the saving ("≈ −1.5 GB" where
+the package may grow), the package's audio (the original's on hover), the
+rules it breaks as tags ("not packaged", "packaging failed", "bit rate >
+cap", "size > cap", "not HEVC", "no surround", "image subs missing", the
+same in the summary, the filter and the details), what processing it again
+does ("re-encode", "repackage", "package", or "blocked" for a title it can't
+help, `reworkBlocked`), and its status with the queue's reason. Numbers sit
+to the right in figures of one width. A row's details open under it: each
+finding in katalog-manager's words with its technical part (a codec's id, a
+tool's output), why it is blocked, the queue's technical part and the
+original's audio. The headers of the title, the bit rate, the original, the
+package (the first order, the biggest first) and the saving sort the report
+on katalog-manager (`sort`, `descending`): the pages and the CSV come in the
+same order. **download CSV** saves every title the filter matches, in that
+order, from katalog-manager's `compliance.csv` beside its GraphQL endpoint,
+under the name katalog-manager gives it, of the kind and when the check ran,
+in UTC (`rules-movies-2026-10-26T1343Z.csv`). The filters and the table take
+more of a wide screen than the column above them; on a narrow one the table
 scrolls sideways, its checkboxes and titles in view.
 
 A title is processed again from its row (**process again**), several by
 ticking them, or every title that matches: the header checkbox ticks the
 rows on the screen, and the toolbar then offers to select all that match and
-that the queue would take (`queueable`), with their count. A filter change
-keeps the rows ticked and counts those it hides; a selection of every match
-goes with its filter. A title the queue holds, queued or processing, or that
-processing again can't help, can't be ticked or processed again, and every
-way of selecting leaves it out; its checkbox and its button stay in the row,
-off, their names saying why. One confirm asks first, the same for one title
-and many, titled with the button's words ("process 12 titles again"): each
-title is processed again from its original with today's settings, one after
-another; its current version plays until the new one is ready; the original
-isn't changed; and their packages now and at most after, every match's from
-the report's totals. The titles go to the re-encode queue with
-`queueRework`, or every match with `queueReworkMatching` and the filter.
-What happened is said in katalog-manager's words: a toast of the titles
-queued (`queuedText`), a plain one of those the queue held already
-(`alreadyText`), and a warning banner of the titles it didn't take, or that
-nothing was queued at all (`notQueuedText`), each title with its reason
-under details (`skippedTitles`). A title processed again that follows the
-rules leaves the list and counts as processed again.
+that the queue would take (`queueable`), with their count, but not while a
+check runs. A filter change keeps the rows ticked and counts those it hides;
+a selection of every match goes with its filter. A title the queue holds,
+queued or processing, or that processing again can't help, can't be ticked
+or processed again, and every way of selecting leaves it out; its checkbox
+and its button stay in the row, off, their names saying why. One confirm
+asks first, the same for one title and many, titled with the button's words
+("process 12 titles again"), in words as this installation processes titles
+(`processing`): each title is processed again from its original with today's
+settings, at the queue's pace and in its window as they are set (`inflight`,
+`window`); its current version plays until the new one is ready; and the
+original isn't changed, or, where `originals` deletes it once the new
+version is complete, the confirm says so and its button is the danger one.
+Its facts are the packages now and about after, every match's from the
+report's totals, and how many titles have no estimate (`withoutEstimate`).
+The titles go to the re-encode queue with `queueRework`, or every match with
+`queueReworkMatching`, the filter and the count the confirm named
+(`expected`): katalog-manager queues none when the filter matches another
+number by then, and the tab says so and reads the list again. What happened
+is said in katalog-manager's words: a toast of the titles queued
+(`queuedText`), a plain one of those the queue held already (`alreadyText`),
+and a warning banner of the titles it didn't take, or that nothing was
+queued at all (`notQueuedText`), each title with its reason under details
+(`skippedTitles`). A title processed again that follows the rules leaves the
+list and counts as processed again.
 
 Sizes are written as chino's downloads write them: decimal units, GB with
 one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
 1,000 GB.
 
 It needs a katalog-manager with `libraryCompliance` (with `sort` and
-`descending`, `checkedTitles`, `matching`, `queueable`, `queue`, the rows'
-measures, `outcome`, `queueReason`, `queueDetail` and `reworkBlocked`, and
-the `detail` of each finding and of each rule), `GET
-/api/manage/compliance.csv`, `queueRework` and `queueReworkMatching` (with
-`skippedTitles`, `queuedText`, `alreadyText` and `notQueuedText`) and
-`refreshCompliance`: against an older one the tab says that the catalog
-service on the server has no rules check, and the rest of the console works.
+`descending`, `checkedTitles`, `matching` and `queueable` with
+`withoutEstimate`, `queue`, `processing`, the rows' measures, `outcome`,
+`queueReason`, `queueDetail` and `reworkBlocked`, and the `detail` of each
+finding and of each rule), its `compliance.csv`, `queueRework` and
+`queueReworkMatching` (with `expected`, `skippedTitles`, `queuedText`,
+`alreadyText` and `notQueuedText`) and `refreshCompliance`: against an older
+one the tab says that the catalog service on the server has no rules check,
+and the rest of the console works.
 
 ## Track languages
 
@@ -176,8 +185,9 @@ npx vite --config harness/vite.config.ts  # the console on :8794 (HARNESS_PORT)
 http://localhost:8794/katalog-manage/rules is the rules tab; `?mock=` plays
 its other states: `empty` (every title follows the rules), `never` (never
 checked), `checking`, `unreported` (the transcoder never reported its
-rules), `old` (a katalog-manager without the report) and `down` (it answers
-502). The stand-in keeps what is queued in memory; restart it for the seeded
+rules), `old` (a katalog-manager without the report), `down` (it answers
+502) and `delete` (originals deleted once their new version is complete).
+The stand-in keeps what is queued in memory; restart it for the seeded
 state.
 
 ## Container
