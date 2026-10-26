@@ -62,7 +62,7 @@ export interface ComplianceRow {
   findings: ComplianceFinding[];
   originalBytes: number | null;
   packageBytes: number | null;
-  estimatedBytes: number | null; // the package at most, under the rules
+  estimatedBytes: number | null; // the package's size after, as the check estimates it under the rules
   queue: string | null; // queued | sent | done | failed: where the title stands in the re-encode queue
   queueReason: string | null; // why it waits or failed there, in a sentence
   queueDetail: string | null; // the technical part of that ("ffmpeg exited 1")
@@ -72,8 +72,6 @@ export interface ComplianceRow {
   videoBitrate: number | null; // bit/s, the video's average, the package's else the original's
   videoBitrateEstimated: boolean; // the bit rate is worked out from the size and the duration
   bitrateCap: number | null; // bit/s, the transcoder's cap for the title's kind and height; null when not reported
-  sizeCap: number | null; // bytes, the transcoder's cap of a movie's file; null for an episode, or when not reported
-  durationSeconds: number | null;
   packageAudio: string | null; // "5.1 E-AC-3 + 2.0 AAC"
   originalAudio: string | null; // "7.1 TrueHD"
   outcome: ComplianceOutcome | null;
@@ -85,12 +83,24 @@ export interface ComplianceSummary {
   packageBytes: number;
   estimatedBytes: number | null;
 }
-/** The totals over every title that matches the filter, not only a page. */
+/** The totals over every title that matches the filter, not only a page:
+ *  its packages now and estimated after over the same titles, and how many
+ *  of them have no estimate. */
 export interface ComplianceTotals {
   titles: number;
   originalBytes: number;
   packageBytes: number;
   estimatedBytes: number | null;
+  withoutEstimate: number;
+}
+/** How the re-encode queue processes titles, as this installation is set:
+ *  what becomes of an original once its new version is complete
+ *  (library.originals: keep, or delete-after-package), how many titles it
+ *  sends at once, and when. */
+export interface ComplianceProcessing {
+  originals: string;
+  inflight: number | null;
+  window: string | null;
 }
 /** The re-encode queue's titles by state, all of them. */
 export interface ComplianceQueueCounts {
@@ -107,6 +117,7 @@ export interface ComplianceReport {
   matching: ComplianceTotals;
   queueable: ComplianceTotals; // of those matching, the titles the queue would take: none it holds, none processing again can't help
   queue: ComplianceQueueCounts;
+  processing: ComplianceProcessing | null;
   summary: ComplianceSummary[];
   rows: ComplianceRow[]; // the titles that break a rule, biggest package (then original) first
   nextCursor: string | null;
@@ -157,30 +168,22 @@ export const RULE_ORDER: readonly ComplianceRule[] = [
   'IMAGE_SUBTITLES_MISSING',
 ];
 
-// The rules' tags, short and technical, in the monospace voice; names keep
-// their case.
+// The rules' tags, short and technical, in the monospace voice, the same in
+// the table, the summary, the filter and the details; names keep their case.
 const RULE_TAGS: Record<ComplianceRule, string> = {
   NOT_PACKAGED: 'not packaged',
-  PACKAGING_FAILED: 'failed',
+  PACKAGING_FAILED: 'packaging failed',
   OVER_BITRATE_CAP: 'bit rate > cap',
-  OVER_SIZE_CAP: 'copy > cap',
+  OVER_SIZE_CAP: 'size > cap',
   VIDEO_NOT_HEVC: 'not HEVC',
-  NO_SURROUND: 'no 5.1',
-  IMAGE_SUBTITLES_MISSING: 'image subs',
+  NO_SURROUND: 'no surround',
+  IMAGE_SUBTITLES_MISSING: 'image subs missing',
 };
 
-/** A rule's tag: "bit rate > cap", "not HEVC"; the size cap's with the cap
- *  the transcoder reported, "copy > 15 GiB", when it is known (sizeCap, in
- *  bytes). A rule the console does not know reads as its name. */
-export function ruleTag(rule: string, sizeCap?: number | null): string {
-  if (rule === 'OVER_SIZE_CAP' && sizeCap != null && sizeCap > 0) return `copy > ${fmtGiB(sizeCap)}`;
+/** A rule's tag: "bit rate > cap", "not HEVC". A rule the console does not
+ *  know reads as its name. */
+export function ruleTag(rule: string): string {
   return RULE_TAGS[rule as ComplianceRule] ?? rule.toLowerCase().replace(/_/g, ' ');
-}
-
-/** The transcoder's cap of a movie's file, as the rows report it: every
- *  movie's row carries it; null while none is loaded. */
-export function sizeCapOf(rows: readonly Pick<ComplianceRow, 'sizeCap'>[]): number | null {
-  return rows.find((r) => r.sizeCap != null && r.sizeCap > 0)?.sizeCap ?? null;
 }
 
 /** xs in RULE_ORDER; a rule the console does not know comes after, by name. */
@@ -236,12 +239,12 @@ export function isFiltering(f: ComplianceFilter): boolean {
   return filterKey(f) !== filterKey(CLEARED_FILTER);
 }
 
-/** The filter bar's count: what is left of every title that breaks a rule,
- *  "230 of 279"; the total alone while nothing filters, or when it isn't
- *  known; nothing while no title breaks a rule at all. */
-export function countText(left: number, all: number | null | undefined): string {
-  if (left === 0 && !all) return '';
-  return all == null || all === left ? fmtCount(left) : `${fmtCount(left)} of ${fmtCount(all)}`;
+/** The filter bar's count while something filters: what is left of every
+ *  title that breaks a rule, "230 of 279"; nothing while nothing filters
+ *  (the table's heading counts them), or while every title isn't known. */
+export function countText(left: number, all: number | null | undefined, filtering: boolean): string {
+  if (!filtering || all == null) return '';
+  return `${fmtCount(left)} of ${fmtCount(all)}`;
 }
 
 /** rules with rule ticked (on) or not. */
@@ -296,12 +299,12 @@ const CAP_RULES: readonly string[] = ['OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'VIDE
 const OUTCOME_TAGS: Record<ComplianceOutcome, string> = {
   REENCODE: 're-encode',
   REPACKAGE: 'repackage',
-  FIRST_PACKAGE: 'first package',
+  FIRST_PACKAGE: 'package',
   BLOCKED: 'blocked',
 };
 
 /** What processing a title again does to it, as a tag: katalog-manager's
- *  outcome, "re-encode", "repackage", "first package", or "blocked" for a
+ *  outcome, "re-encode", "repackage", "package", or "blocked" for a
  *  title processing again can't help. A server that tells no outcome gets
  *  one from the rules the title breaks: packaged for the first time when it
  *  never was, re-encoded over a cap of the transcoder's, packaged again
@@ -343,20 +346,27 @@ export function audioLines(audio: string | null | undefined): string[] {
   return tracks.length ? tracks.map((t, i) => (i ? `+ ${t}` : t)) : ['—'];
 }
 
-/** What processing a title again frees at least: its package less the most
- *  it is to take after, as katalog-manager sorts by it; less than nothing
- *  where the package may grow (H.264 re-encoded up to the cap, a track
- *  added); null when either isn't known. */
+/** What processing a title again frees, as the check estimates it: its
+ *  package less its size after, as katalog-manager sorts by it; less than
+ *  nothing where the package may grow (H.264 re-encoded up to the cap, a
+ *  track added); null when either isn't known. */
 export function savingBytes(r: Pick<ComplianceRow, 'packageBytes' | 'estimatedBytes'>): number | null {
   if (r.packageBytes == null || r.estimatedBytes == null || r.packageBytes <= 0 || r.estimatedBytes <= 0) return null;
   return r.packageBytes - r.estimatedBytes;
 }
 
-/** A size that may be less than nothing, with its sign: "64.6 GB",
+/** A size that may be less than nothing, with its sign (U+2212): "64.6 GB",
  *  "−1.5 GB"; '—' for none. */
 export function signedSizeText(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
   return n < 0 ? `−${fmtBytes(-n)}` : fmtBytes(n);
+}
+
+/** An estimate, marked as one: "≈ 11.9 GB", "≈ −1.5 GB"; '—' for none.
+ *  signed: a size that may be less than nothing. */
+export function estimateText(n: number | null | undefined, signed = false): string {
+  const size = signed ? signedSizeText(n) : sizeText(n);
+  return size === '—' ? size : `≈${NBSP}${size}`;
 }
 
 /** rows, then those of more not among them (a page loaded after). */
@@ -440,10 +450,10 @@ export interface DetailLine {
  *  queue's technical part, by the status it explains; and the original's
  *  audio. */
 export function rowDetails(
-  r: Pick<ComplianceRow, 'findings' | 'queue' | 'queueDetail' | 'reworkBlocked' | 'outcome' | 'sizeCap' | 'originalAudio'>,
+  r: Pick<ComplianceRow, 'findings' | 'queue' | 'queueDetail' | 'reworkBlocked' | 'outcome' | 'originalAudio'>,
 ): DetailLine[] {
   const lines: DetailLine[] = inRuleOrder(r.findings).map((f) => ({
-    label: ruleTag(f.rule, r.sizeCap),
+    label: ruleTag(f.rule),
     text: findingText(f),
     detail: f.detail?.trim() || null,
   }));
@@ -595,21 +605,78 @@ export function processLabel(titles: number): string {
   return titles === 1 ? 'process 1 title again' : `process ${fmtCount(titles)} titles again`;
 }
 
-/** What the confirm says processing titles again does: of one title, and of
- *  several. */
-export function confirmBody(titles: number): string {
-  return titles === 1
-    ? 'The title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready, and the original isn’t changed.'
-    : 'Each title is processed again from its original, with today’s settings, one after another. Its current version keeps playing until the new one is ready, and the original isn’t changed.';
+/** The confirm's words that hang on how this installation processes
+ *  titles, read live (ComplianceProcessing), in one place: the UX session's
+ *  final words take their place.
+ *  - pace: how fast the queue goes, of inflight: "up to 4 at a time", "one
+ *    at a time", "a few at a time" while it isn't known;
+ *  - when: the queue's window, "between 23:00 and 07:00", '' while it isn't
+ *    known;
+ *  - keep, deleted, unknown: the body, of one title and of several, as
+ *    library.originals keeps the original, deletes it once the new version
+ *    is complete, or says something the console doesn't know (no word on
+ *    the original then);
+ *  - withoutEstimate: the confirm's note of the titles with no estimate. */
+export const PROCESS_WORDS = {
+  pace: (inflight: number | null | undefined): string =>
+    inflight == null || inflight < 1 ? 'a few at a time' : inflight === 1 ? 'one at a time' : `up to ${fmtCount(inflight)} at a time`,
+  when: (window: string | null | undefined): string => {
+    const m = /^\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*$/.exec(window ?? '');
+    return m ? `between ${m[1]} and ${m[2]}` : '';
+  },
+  keep: {
+    one: (when: string) =>
+      `The title is processed again from its original, with today’s settings${when ? `, ${when}` : ''}. Its current version keeps playing until the new one is ready, and the original isn’t changed.`,
+    several: (pace: string, when: string) =>
+      `Each title is processed again from its original, with today’s settings, ${pace}${when ? ` ${when}` : ''}. Its current version keeps playing until the new one is ready, and the original isn’t changed.`,
+  },
+  deleted: {
+    one: (when: string) =>
+      `The title is processed again from its original, with today’s settings${when ? `, ${when}` : ''}. Its current version keeps playing until the new one is ready. Once the new version is complete, the original is deleted.`,
+    several: (pace: string, when: string) =>
+      `Each title is processed again from its original, with today’s settings, ${pace}${when ? ` ${when}` : ''}. Its current version keeps playing until the new one is ready. Once the new version is complete, its original is deleted.`,
+  },
+  unknown: {
+    one: (when: string) =>
+      `The title is processed again from its original, with today’s settings${when ? `, ${when}` : ''}. Its current version keeps playing until the new one is ready.`,
+    several: (pace: string, when: string) =>
+      `Each title is processed again from its original, with today’s settings, ${pace}${when ? ` ${when}` : ''}. Its current version keeps playing until the new one is ready.`,
+  },
+  withoutEstimate: (n: number, titles: number): string =>
+    titles === 1 ? 'no estimate after' : `${fmtCount(n)} ${n === 1 ? 'title' : 'titles'} without an estimate`,
+};
+
+/** library.originals, as the confirm reads it: kept, deleted once the new
+ *  version is complete, or a value the console doesn't know. */
+export function originalsAre(p: Pick<ComplianceProcessing, 'originals'> | null | undefined): 'keep' | 'deleted' | 'unknown' {
+  const v = p?.originals?.trim().toLowerCase();
+  return v === 'keep' ? 'keep' : v === 'delete-after-package' ? 'deleted' : 'unknown';
 }
 
-/** What a confirm asks about: how many titles, the one's name, and their
- *  packages' size now and at most after, where known. */
+/** What the confirm says processing titles again does, of one title and of
+ *  several, with the queue's pace and window and what becomes of the
+ *  original, as this installation is set. */
+export function confirmBody(titles: number, p?: ComplianceProcessing | null): string {
+  const words = PROCESS_WORDS[originalsAre(p)];
+  const when = PROCESS_WORDS.when(p?.window);
+  return titles === 1 ? words.one(when) : words.several(PROCESS_WORDS.pace(p?.inflight), when);
+}
+
+/** True when processing titles again deletes their originals once their new
+ *  versions are complete: the confirm's button is the danger one then. */
+export function deletesOriginals(p: ComplianceProcessing | null | undefined): boolean {
+  return originalsAre(p) === 'deleted';
+}
+
+/** What a confirm asks about: how many titles, the one's name, their
+ *  packages' size now and estimated after, where known, and how many of them
+ *  have no estimate. */
 export interface ProcessScope {
   titles: number;
   name: string | null;
   packageBytes: number | null;
   estimatedBytes: number | null;
+  withoutEstimate: number;
 }
 
 /** The scope of processing these rows again. */
@@ -620,30 +687,38 @@ export function rowsScope(rows: readonly ComplianceRow[]): ProcessScope {
     name: rows.length === 1 ? rowTitle(rows[0]) : null,
     packageBytes: rows.reduce((sum, r) => sum + (r.packageBytes ?? 0), 0),
     estimatedBytes: estimated.length ? estimated.reduce((sum, r) => sum + (r.estimatedBytes ?? 0), 0) : null,
+    withoutEstimate: rows.length - estimated.length,
   };
 }
 
 /** The scope of processing every title that matches again, from the report's
- *  totals over all of them that the queue doesn't hold (queueable). */
+ *  totals over all of them that the queue would take (queueable). */
 export function matchingScope(m: ComplianceTotals): ProcessScope {
-  return { titles: m.titles, name: null, packageBytes: m.packageBytes, estimatedBytes: m.estimatedBytes };
+  return {
+    titles: m.titles,
+    name: null,
+    packageBytes: m.packageBytes,
+    estimatedBytes: m.estimatedBytes,
+    withoutEstimate: m.withoutEstimate ?? 0,
+  };
 }
 
-/** A package's size now and at most after, in words: "5.9 TB now, at most
- *  1.3 TB after", "59 GB now", "at most 12 GB after"; '' with neither. */
+/** A package's size now and estimated after, in words: "5.9 TB now, about
+ *  1.3 TB after", "59 GB now", "about 12 GB after"; '' with neither. */
 export function nowAndAfter(now: number | null | undefined, after: number | null | undefined): string {
-  return [now != null && now > 0 ? `${fmtBytes(now)} now` : '', after != null && after > 0 ? `at most ${fmtBytes(after)} after` : '']
+  return [now != null && now > 0 ? `${fmtBytes(now)} now` : '', after != null && after > 0 ? `about ${fmtBytes(after)} after` : '']
     .filter(Boolean)
     .join(', ');
 }
 
 /** The confirm's facts under its sentence: the title, when it is one, and
- *  the packages now and at most after. */
-export function confirmFacts(s: ProcessScope): { label: string; value: string }[] {
-  const facts: { label: string; value: string }[] = [];
-  if (s.name) facts.push({ label: 'title', value: s.name });
+ *  the packages now and estimated after, with how many have no estimate. */
+export function confirmFacts(s: ProcessScope): { label: string; value: string; note: string | null }[] {
+  const facts: { label: string; value: string; note: string | null }[] = [];
+  if (s.name) facts.push({ label: 'title', value: s.name, note: null });
   const sizes = nowAndAfter(s.packageBytes, s.estimatedBytes);
-  if (sizes) facts.push({ label: s.titles === 1 ? 'package' : 'packages', value: sizes });
+  const note = s.withoutEstimate > 0 ? PROCESS_WORDS.withoutEstimate(s.withoutEstimate, s.titles) : null;
+  if (sizes || note) facts.push({ label: s.titles === 1 ? 'package' : 'packages', value: sizes, note });
   return facts;
 }
 
@@ -720,14 +795,6 @@ export function sizeText(n: number | null | undefined): string {
   return n != null && n > 0 ? fmtBytes(n) : '—';
 }
 
-const GiB = 1024 ** 3;
-
-/** A cap as the transcoder sets it, in GiB, one decimal and no trailing
- *  zero: "15 GiB". */
-export function fmtGiB(n: number): string {
-  return tenths(n / GiB, 'GiB');
-}
-
 // ---- the order, the CSV and the check
 
 /** Each order the table sorts in, and the way it goes at first: the biggest
@@ -775,10 +842,10 @@ export function csvQuery(f: ComplianceFilter, o: ComplianceOrder): string {
 }
 
 /** Where katalog-manager serves the report as a CSV, every row the filter
- *  matches in the table's order: under /api/manage like the GraphQL
- *  endpoint, with the same auth. */
-export function csvUrl(f: ComplianceFilter, o: ComplianceOrder): string {
-  return `/api/manage/compliance.csv?${csvQuery(f, o)}`;
+ *  matches in the table's order: beside its GraphQL endpoint (base, the
+ *  endpoint without its /query), with the same auth. */
+export function csvUrl(base: string, f: ComplianceFilter, o: ComplianceOrder): string {
+  return `${base.replace(/\/+$/, '')}/compliance.csv?${csvQuery(f, o)}`;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');

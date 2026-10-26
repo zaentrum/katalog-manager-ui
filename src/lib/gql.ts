@@ -8,6 +8,10 @@ import { useAuth } from 'react-oidc-context';
 export const KATALOG_GQL: string =
   (import.meta.env.VITE_KATALOG_GQL as string | undefined) ?? '/api/manage/query';
 
+/** The base katalog-manager serves its other routes beside the GraphQL
+ *  endpoint from: the endpoint without its /query ("/api/manage"). */
+export const KATALOG_BASE: string = KATALOG_GQL.replace(/\/query\/?$/, '');
+
 export interface GraphQLError {
   message: string;
 }

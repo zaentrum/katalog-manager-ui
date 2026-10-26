@@ -18,7 +18,7 @@ import {
   Search,
   SearchX,
 } from 'lucide-react';
-import { useGql } from '../lib/gql';
+import { KATALOG_BASE, useGql } from '../lib/gql';
 import { useQuery } from '../lib/useQuery';
 import { BASE_NOSLASH } from '../lib/basepath';
 import { fmtTime } from './status';
@@ -43,8 +43,10 @@ import {
   countText,
   csvFileName,
   csvUrl,
+  deletesOriginals,
   dispositionName,
   emptyState,
+  estimateText,
   filterKey,
   filterVariables,
   fmtBitrate,
@@ -78,8 +80,6 @@ import {
   select,
   selectedCount,
   selectionText,
-  signedSizeText,
-  sizeCapOf,
   sizeText,
   staleText,
   titlesOf,
@@ -88,6 +88,7 @@ import {
   type ComplianceFilter,
   type ComplianceKind,
   type ComplianceOrder,
+  type ComplianceProcessing,
   type ComplianceQueued,
   type ComplianceReport,
   type ComplianceRow,
@@ -108,13 +109,14 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
       packager { worker version reportedAt rules { key label value detail } }
     }
     notEvaluated evaluatedAt evaluating
-    matching { titles originalBytes packageBytes estimatedBytes }
-    queueable { titles originalBytes packageBytes estimatedBytes }
+    matching { titles originalBytes packageBytes estimatedBytes withoutEstimate }
+    queueable { titles originalBytes packageBytes estimatedBytes withoutEstimate }
     queue { queued processing processed failed }
+    processing { originals inflight window }
     summary { rule titles packageBytes estimatedBytes }
     rows {
       itemId title year kind seriesId seriesTitle season episode
-      resolution videoCodec videoBitrate videoBitrateEstimated bitrateCap sizeCap durationSeconds packageAudio originalAudio
+      resolution videoCodec videoBitrate videoBitrateEstimated bitrateCap packageAudio originalAudio
       findings { rule text measured limit detail }
       originalBytes packageBytes estimatedBytes outcome queue queueReason queueDetail reworkBlocked evaluatedAt
     }
@@ -126,19 +128,23 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
 const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { checkedTitles matching { titles } } }`;
 const QUEUED = `queued alreadyQueued skipped skippedTitles { itemId title reason } message queuedText alreadyText notQueuedText`;
 const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { ${QUEUED} } }`;
-const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String) {
-  queueReworkMatching(kind: $kind, rules: $rules, search: $search) { ${QUEUED} }
+// expected: as many titles as the confirm named; katalog-manager queues
+// none when the filter matches another number by then
+const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $expected: Int!) {
+  queueReworkMatching(kind: $kind, rules: $rules, search: $search, expected: $expected) { ${QUEUED} }
 }`;
 const CHECK = `mutation($kind: ComplianceKind) { refreshCompliance(kind: $kind) }`;
 
 /** Titles the confirm asks about: those named, or every title that matches
- *  the filter. */
+ *  the filter; and how this installation processes them, as the report said
+ *  when the confirm opened. */
 interface Processing {
   scope: ProcessScope;
   items: string[];
   matching: ComplianceFilter | null;
   // from the selection toolbar: once queued, the selection is cleared
   bulk: boolean;
+  settings: ComplianceProcessing | null;
 }
 
 /** A banner about something that failed: what, and the technical detail
@@ -408,7 +414,7 @@ export function RulesView() {
   async function saveCsv() {
     setSaving(true);
     try {
-      await download(csvUrl(filter, order), csvFileName(filter.kind, report?.evaluatedAt ?? null));
+      await download(csvUrl(KATALOG_BASE, filter, order), csvFileName(filter.kind, report?.evaluatedAt ?? null));
     } catch (e) {
       setProblem({ state: 'error', text: 'Couldn’t download the CSV.', detail: loadFailure(e).detail, retry: false });
     } finally {
@@ -483,11 +489,10 @@ export function RulesView() {
   const headBox = pageState(sel, rows);
   const pickable = rows.filter(canProcess);
   const empty = emptyState(report, filter);
-  // the size cap the transcoder reported, for the size rule's tag
-  const sizeCap = sizeCapOf(rows);
   const counts = checkCounts(all.data?.libraryCompliance.checkedTitles, all.data?.libraryCompliance.matching.titles);
 
-  const open = (p: Processing) => setProcessing(p);
+  const settings = report.processing;
+  const open = (p: Omit<Processing, 'settings'>) => setProcessing({ ...p, settings });
   function processSelection() {
     if (!report) return;
     if (sel.mode === 'matching') {
@@ -566,14 +571,14 @@ export function RulesView() {
     { key: 'cap', header: 'cap', align: 'right', render: (r) => num(fmtBitrate(r.bitrateCap)) },
     { key: 'original', header: 'original', align: 'right', sort: 'ORIGINAL_SIZE', render: (r) => num(sizeText(r.originalBytes)) },
     { key: 'package', header: 'package', align: 'right', sort: 'PACKAGE_SIZE', render: (r) => num(sizeText(r.packageBytes)) },
-    { key: 'after', header: 'at most after', align: 'right', render: (r) => num(isBlocked(r) ? '—' : sizeText(r.estimatedBytes)) },
+    { key: 'after', header: '≈ after', align: 'right', render: (r) => num(isBlocked(r) ? '—' : estimateText(r.estimatedBytes)) },
     {
       key: 'saving',
       header: 'saving',
       align: 'right',
       sort: 'SAVING',
-      sortTitle: 'package − at most after',
-      render: (r) => num(isBlocked(r) ? '—' : signedSizeText(savingBytes(r))),
+      sortTitle: 'package − ≈ after',
+      render: (r) => num(isBlocked(r) ? '—' : estimateText(savingBytes(r), true)),
     },
     {
       key: 'audio',
@@ -593,7 +598,7 @@ export function RulesView() {
         <span className="kat__tags">
           {[...new Set(inRuleOrder(r.findings).map((f) => f.rule))].map((rule) => (
             <span key={rule} className="kat__tag">
-              {ruleTag(rule, r.sizeCap)}
+              {ruleTag(rule)}
             </span>
           ))}
         </span>
@@ -684,7 +689,7 @@ export function RulesView() {
         <div className="kat__summary">
           <h3 className="kat__h3">by rule</h3>
           <ScrollEdges>
-            <SummaryTable summary={report.summary} rules={rules} sizeCap={sizeCap} onPick={(rule) => setRules(pickRule(rules, rule))} />
+            <SummaryTable summary={report.summary} rules={rules} onPick={(rule) => setRules(pickRule(rules, rule))} />
           </ScrollEdges>
           {parts.length > 0 && (
             <p className="kat__queue">
@@ -724,10 +729,13 @@ export function RulesView() {
             <div className="kat__filter-end">
               {loading === 'first' && <Spinner size={14} label="loading titles" />}
               <span className="kat__count" aria-live="polite" aria-atomic="true">
-                {countText(matching, all.data?.libraryCompliance.matching.titles)}
+                {countText(matching, all.data?.libraryCompliance.matching.titles, isFiltering(filter))}
               </span>
               <Button variant="ghost" size="sm" leading={<Download size={14} />} loading={saving} disabled={matching === 0} onClick={() => void saveCsv()}>
-                download csv
+                {/* one label: the button's words are lowercase, the format's name isn't */}
+                <span>
+                  download <span className="kat__keepcase">CSV</span>
+                </span>
               </Button>
               <Button variant="ghost" size="sm" disabled={!isFiltering({ kind, rules, search: typed })} onClick={clearAll}>
                 clear all
@@ -740,7 +748,7 @@ export function RulesView() {
               {RULE_ORDER.map((rule) => (
                 <Checkbox
                   key={rule}
-                  label={<span className="kat__mono">{ruleTag(rule, sizeCap)}</span>}
+                  label={<span className="kat__mono">{ruleTag(rule)}</span>}
                   checked={rules.includes(rule)}
                   onChange={(e) => setRules(withRule(rules, rule, e.target.checked))}
                 />
@@ -778,7 +786,8 @@ export function RulesView() {
               heading={titlesOf(kind, matching)}
               count={count}
               text={selectionText(count, hidden)}
-              offer={offersMatching(sel, rows, queueable) ? `select all ${fmtCount(queueable)} matching` : null}
+              // not while a check runs: the titles that match may change under it
+              offer={offersMatching(sel, rows, queueable) && !report.evaluating ? `select all ${fmtCount(queueable)} matching` : null}
               action={processLabel(count)}
               onClear={() => {
                 dispatch({ type: 'clear' });
@@ -876,17 +885,15 @@ function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
 }
 
 // SummaryTable is how many titles break each rule, by its tag, and their
-// packages now and at most after; a rule lists its titles alone, and again
+// packages now and estimated after; a rule lists its titles alone, and again
 // every rule's.
 function SummaryTable({
   summary,
   rules,
-  sizeCap,
   onPick,
 }: {
   summary: ComplianceSummary[];
   rules: ComplianceRule[];
-  sizeCap: number | null;
   onPick: (rule: ComplianceRule) => void;
 }) {
   const cols: TableColumn<ComplianceSummary>[] = [
@@ -895,7 +902,7 @@ function SummaryTable({
       header: 'rule',
       render: (s) => (
         <button type="button" className="kat__rulebtn" aria-pressed={isOnlyRule(rules, s.rule)} onClick={() => onPick(s.rule)}>
-          {ruleTag(s.rule, sizeCap)}
+          {ruleTag(s.rule)}
         </button>
       ),
     },
@@ -903,9 +910,9 @@ function SummaryTable({
     { key: 'packageBytes', header: 'now', align: 'right', render: (s) => <span className="kat__num">{sizeText(s.packageBytes)}</span> },
     {
       key: 'estimatedBytes',
-      header: 'at most after',
+      header: '≈ after',
       align: 'right',
-      render: (s) => <span className="kat__num">{sizeText(s.estimatedBytes)}</span>,
+      render: (s) => <span className="kat__num">{estimateText(s.estimatedBytes)}</span>,
     },
   ];
   return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense aria-label="titles by rule" />;
@@ -1267,7 +1274,9 @@ function Toast({ toast, onGone }: { toast: ToastItem; onGone: (id: number) => vo
 
 // ProcessDialog asks before titles go to the re-encode queue, the same for
 // one title and for many: its title the button's words, what processing them
-// again does, and their packages now and at most after.
+// again does as this installation is set (the queue's pace and window, what
+// becomes of the original: the danger button where it is deleted), and
+// their packages now and estimated after.
 function ProcessDialog({
   processing,
   onClose,
@@ -1288,7 +1297,12 @@ function ProcessDialog({
     setBusy(true);
     try {
       const r = processing.matching
-        ? (await gql<{ queueReworkMatching: ComplianceQueued }>(QUEUE_MATCHING, filterVariables(processing.matching))).queueReworkMatching
+        ? (
+            await gql<{ queueReworkMatching: ComplianceQueued }>(QUEUE_MATCHING, {
+              ...filterVariables(processing.matching),
+              expected: processing.scope.titles,
+            })
+          ).queueReworkMatching
         : (await gql<{ queueRework: ComplianceQueued }>(QUEUE_ITEMS, { items: processing.items })).queueRework;
       onQueued(r, processing);
     } catch (e) {
@@ -1306,20 +1320,29 @@ function ProcessDialog({
           <Button variant="ghost" size="sm" onClick={onClose}>
             cancel
           </Button>
-          <Button variant="primary" size="sm" leading={<FileVideo size={13} />} loading={busy} onClick={() => void submit()}>
+          <Button
+            variant={deletesOriginals(processing.settings) ? 'danger' : 'primary'}
+            size="sm"
+            leading={<FileVideo size={13} />}
+            loading={busy}
+            onClick={() => void submit()}
+          >
             {label}
           </Button>
         </>
       }
     >
       <div className="kat__form">
-        <p className="kat__confirm-body">{confirmBody(processing.scope.titles)}</p>
+        <p className="kat__confirm-body">{confirmBody(processing.scope.titles, processing.settings)}</p>
         {facts.length > 0 && (
           <dl className="kat__kv kat__confirm-facts">
             {facts.map((f) => (
               <Fragment key={f.label}>
                 <dt>{f.label}</dt>
-                <dd className="kat__mono">{f.value}</dd>
+                <dd className="kat__mono">
+                  {f.value}
+                  {f.note && <span className="kat__confirm-note">{f.note}</span>}
+                </dd>
               </Fragment>
             ))}
           </dl>
