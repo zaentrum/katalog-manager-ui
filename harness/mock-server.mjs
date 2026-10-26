@@ -10,7 +10,6 @@
 //   never       the titles were never checked
 //   checking    a check is running
 //   unreported  the transcoder never reported its rules: its caps are not checked
-//   unset       none of the queue's settings is set: the confirm says no pace
 //   old         a katalog-manager without the report: graph-gophers' validation errors
 //   down        katalog-manager answers 502
 // It keeps the queue in memory; restart it for the seeded state.
@@ -18,32 +17,37 @@ import { createServer } from 'node:http';
 
 const PORT = Number(process.env.MOCK_PORT) || 8793;
 const GiB = 1024 ** 3;
+const GB = 1e9;
 
 // a seeded generator: the same library at every start
 let seed = 20261026;
 const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const between = (a, b) => a + rand() * (b - a);
 const round1 = (n) => Math.round(n * 10) / 10;
+// sizes as the server writes them in its sentences: decimal, one decimal
+const gb = (bytes) => `${round1(bytes / GB)} GB`;
 
-// the rules the workers report
+// the rules the workers report; the findings read their limits from here
+const CAPS = { movie: { 1080: 8, 2160: 14 }, episode: { 1080: 6, 2160: 8 } };
+const SIZE_CAP = 15 * GiB;
 const TRANSCODER = {
   worker: 'transcoder',
   version: '0.9.0',
   rules: [
-    { key: 'movie.cap.1080', label: 'movie video at 1080p', value: '8 Mbit/s' },
-    { key: 'movie.cap.2160', label: 'movie video at 2160p', value: '14 Mbit/s' },
-    { key: 'movie.cap.size', label: 'movie size', value: '15 GiB' },
-    { key: 'episode.cap.1080', label: 'episode video at 1080p', value: '6 Mbit/s' },
-    { key: 'episode.cap.2160', label: 'episode video at 2160p', value: '8 Mbit/s' },
-    { key: 'encode', label: 'video over a cap', value: 'one HEVC encode within it' },
+    { key: 'movie.cap.1080', label: 'Movie video at 1080p', value: `${CAPS.movie[1080]} Mbit/s` },
+    { key: 'movie.cap.2160', label: 'Movie video at 2160p', value: `${CAPS.movie[2160]} Mbit/s` },
+    { key: 'movie.cap.size', label: 'Movie size', value: gb(SIZE_CAP) },
+    { key: 'episode.cap.1080', label: 'Episode video at 1080p', value: `${CAPS.episode[1080]} Mbit/s` },
+    { key: 'episode.cap.2160', label: 'Episode video at 2160p', value: `${CAPS.episode[2160]} Mbit/s` },
+    { key: 'encode.codec', label: 'Encoded video', value: 'HEVC' },
   ],
 };
 const PACKAGER = {
   worker: 'packager',
   version: '0.7.2',
   rules: [
-    { key: 'audio.surround', label: 'surround track', value: '5.1' },
-    { key: 'subtitles.image', label: 'image subtitles', value: 'carried' },
+    { key: 'audio.surround', label: 'Surround track', value: '5.1' },
+    { key: 'subtitles.image', label: 'Image subtitles', value: 'Carried' },
   ],
 };
 const hoursAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
@@ -51,29 +55,31 @@ const reportedAt = { transcoder: hoursAgo(3.2), packager: hoursAgo(3.1) };
 let evaluatedAt = hoursAgo(1.4);
 let checkUntil = 0;
 
+// the findings in the server's words: the reason, with the limit read from
+// the rules above
 const finding = {
   bitrate: (mbit, cap, h) => ({
     rule: 'OVER_BITRATE_CAP',
-    text: `video at ${mbit} Mbit/s, over the ${cap} Mbit/s cap at ${h}p`,
+    text: `Video at ${mbit} Mbit/s, above the ${cap} Mbit/s the transcoder allows at ${h}p`,
     measured: `${mbit} Mbit/s`,
     limit: `${cap} Mbit/s`,
   }),
   size: (bytes) => ({
     rule: 'OVER_SIZE_CAP',
-    text: 'package over the 15 GiB cap',
-    measured: `${round1(bytes / GiB)} GiB`,
-    limit: '15 GiB',
+    text: `Package above the ${gb(SIZE_CAP)} the transcoder allows`,
+    measured: gb(bytes),
+    limit: gb(SIZE_CAP),
   }),
-  hevc: () => ({ rule: 'VIDEO_NOT_HEVC', text: 'video in H.264, not HEVC', measured: 'H.264', limit: 'HEVC' }),
-  surround: () => ({ rule: 'NO_SURROUND', text: 'no 5.1 track in the package; the original has 7.1', measured: 'stereo', limit: '5.1' }),
+  hevc: () => ({ rule: 'VIDEO_NOT_HEVC', text: 'Video in H.264; the transcoder encodes HEVC', measured: 'H.264', limit: 'HEVC' }),
+  surround: () => ({ rule: 'NO_SURROUND', text: 'No 5.1 track in the package; the original has 7.1', measured: '2.0', limit: '5.1' }),
   images: (n) => ({
     rule: 'IMAGE_SUBTITLES_MISSING',
-    text: `${n} image subtitle ${n === 1 ? 'track' : 'tracks'} of the original not in the package`,
+    text: `${n} image subtitle ${n === 1 ? 'track' : 'tracks'} of the original ${n === 1 ? "isn't" : "aren't"} in the package`,
     measured: `0 of ${n}`,
     limit: `${n} of ${n}`,
   }),
-  unpackaged: () => ({ rule: 'NOT_PACKAGED', text: 'not packaged', measured: null, limit: null }),
-  failed: () => ({ rule: 'PACKAGING_FAILED', text: 'packaging failed, no attempt left', measured: null, limit: null }),
+  unpackaged: () => ({ rule: 'NOT_PACKAGED', text: 'Not packaged', measured: null, limit: null }),
+  failed: () => ({ rule: 'PACKAGING_FAILED', text: 'Packaging failed on its last attempt', measured: null, limit: null }),
 };
 
 // what a title takes at most under a cap: its video at the cap and a 5.1
@@ -98,16 +104,16 @@ function movies() {
       // a near-copy of a 4K remux
       row.originalBytes = between(42, 78) * GiB;
       row.packageBytes = row.originalBytes * between(0.9, 0.98);
-      row.findings = [finding.bitrate(Math.round((row.packageBytes * 8) / (minutes * 60) / 1e6), 14, 2160), finding.size(row.packageBytes)];
-      row.estimatedBytes = atMost(minutes, 14, 15 * GiB);
+      row.findings = [finding.bitrate(Math.round((row.packageBytes * 8) / (minutes * 60) / 1e6), CAPS.movie[2160], 2160), finding.size(row.packageBytes)];
+      row.estimatedBytes = atMost(minutes, CAPS.movie[2160], SIZE_CAP);
     } else if (p < 0.65) {
       // a near-copy of a 1080p remux, some of them H.264
       row.originalBytes = between(11, 36) * GiB;
       row.packageBytes = row.originalBytes * between(0.9, 0.98);
-      row.findings = [finding.bitrate(Math.round((row.packageBytes * 8) / (minutes * 60) / 1e6), 8, 1080)];
-      if (row.packageBytes > 15 * GiB) row.findings.push(finding.size(row.packageBytes));
+      row.findings = [finding.bitrate(Math.round((row.packageBytes * 8) / (minutes * 60) / 1e6), CAPS.movie[1080], 1080)];
+      if (row.packageBytes > SIZE_CAP) row.findings.push(finding.size(row.packageBytes));
       if (rand() < 0.5) row.findings.push(finding.hevc());
-      row.estimatedBytes = atMost(minutes, 8, 15 * GiB);
+      row.estimatedBytes = atMost(minutes, CAPS.movie[1080], SIZE_CAP);
     } else if (p < 0.77) {
       row.originalBytes = between(9, 30) * GiB;
       row.packageBytes = between(6, 14) * GiB;
@@ -125,11 +131,11 @@ function movies() {
     } else if (p < 0.97) {
       row.originalBytes = between(8, 60) * GiB;
       row.findings = [finding.unpackaged()];
-      row.estimatedBytes = atMost(minutes, row.originalBytes > 30 * GiB ? 14 : 8, 15 * GiB);
+      row.estimatedBytes = atMost(minutes, row.originalBytes > 30 * GiB ? CAPS.movie[2160] : CAPS.movie[1080], SIZE_CAP);
     } else {
       row.originalBytes = between(8, 40) * GiB;
       row.findings = [finding.failed()];
-      row.estimatedBytes = atMost(minutes, 14, 15 * GiB);
+      row.estimatedBytes = atMost(minutes, CAPS.movie[2160], SIZE_CAP);
     }
     return row;
   });
@@ -151,7 +157,7 @@ function episodes() {
         const minutes = between(42, 58);
         const original = (s.uhd ? between(6, 13) : between(2.2, 6)) * GiB;
         const pkg = original * between(0.9, 0.98);
-        const cap = s.uhd ? 8 : 6;
+        const cap = s.uhd ? CAPS.episode[2160] : CAPS.episode[1080];
         const row = { itemId: `${s.id}e${season}${String(episode).padStart(2, '0')}`, title: `Chapter ${episode}`, year: null,
           kind: 'EPISODE', seriesId: s.id, seriesTitle: s.title, season, episode,
           findings: [finding.bitrate(Math.round((pkg * 8) / (minutes * 60) / 1e6), cap, s.uhd ? 2160 : 1080)],
@@ -201,7 +207,7 @@ function compliance(vars, scenario) {
     transcoder: scenario === 'unreported' ? null : { ...TRANSCODER, reportedAt: reportedAt.transcoder },
     packager: { ...PACKAGER, reportedAt: reportedAt.packager },
   };
-  const notEvaluated = scenario === 'unreported' ? ['the transcoder has not reported its rules, so its caps are not checked'] : [];
+  const notEvaluated = scenario === 'unreported' ? ["The transcoder hasn't reported its rules, so its caps aren't checked."] : [];
   const titles = asked(vars, scenario);
   const summary = [];
   for (const rule of ['NOT_PACKAGED', 'PACKAGING_FAILED', 'OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING', 'VIDEO_NOT_HEVC']) {
@@ -218,16 +224,33 @@ function compliance(vars, scenario) {
   const matching = matchingOf(titles, vars);
   const offset = vars.after ? Number(String(vars.after).replace(/^o:/, '')) || 0 : 0;
   const first = Math.min(Math.max(vars.first ?? 100, 1), 500);
+  const estimated = matching.filter((r) => r.estimatedBytes != null);
   return {
     rules,
     notEvaluated,
     evaluatedAt: scenario === 'never' ? null : evaluatedAt,
     evaluating,
     total: matching.length,
+    // the totals over every title that matches, not only the page
+    matching: {
+      titles: matching.length,
+      originalBytes: matching.reduce((s, r) => s + r.originalBytes, 0),
+      packageBytes: matching.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
+      estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
+    },
+    queue: queueCounts(),
     summary,
     rows: matching.slice(offset, offset + first),
     nextCursor: offset + first < matching.length ? `o:${offset + first}` : null,
   };
+}
+
+// the re-encode queue, all of it: titles processed and within the rules have
+// left the report, and are counted all the same
+const PROCESSED_BEFORE = 34;
+function queueCounts() {
+  const count = (q) => library.filter((r) => r.queue === q).length;
+  return { queued: count('queued'), processing: count('sent'), processed: PROCESSED_BEFORE + count('done'), failed: count('failed') };
 }
 
 // queueRework and queueReworkMatching: a title waiting or sent stays as it
@@ -242,10 +265,10 @@ function enqueue(rows, unknown = 0) {
       queued++;
     }
   }
-  const parts = [`queued ${queued} ${queued === 1 ? 'title' : 'titles'} to be encoded again`];
-  if (already) parts.push(`${already} queued already`);
-  if (unknown) parts.push(`${unknown} skipped: unknown item`);
-  return { queued, alreadyQueued: already, skipped: unknown, message: parts.join('; ') };
+  const parts = [`${queued} queued`];
+  if (already) parts.push(`${already} in the queue already`);
+  if (unknown) parts.push(`${unknown} skipped: not in the catalog`);
+  return { queued, alreadyQueued: already, skipped: unknown, message: parts.join(' · ') };
 }
 
 const setting = (id, key, valueText, valueType, description) => ({
@@ -259,7 +282,7 @@ const SETTINGS = [
 ];
 const POLICY = { available: true, automatic: true, reason: null, maxAttempts: 3, backoffSeconds: 60, backoffMaxSeconds: 3600, intervalSeconds: 30 };
 
-function reencodeQueue(scenario) {
+function reencodeQueue() {
   const count = (q) => library.filter((r) => r.queue === q).length;
   const h = new Date().getHours();
   const inside = h >= 23 || h < 7;
@@ -268,7 +291,7 @@ function reencodeQueue(scenario) {
     sent: count('sent'),
     done: count('done'),
     failed: count('failed'),
-    idle: scenario === 'unset' || inside ? null : 'outside library.reencode.window (23:00-07:00)',
+    idle: inside ? null : 'outside library.reencode.window (23:00-07:00)',
   };
 }
 
@@ -306,10 +329,10 @@ function answer(query, vars, scenario) {
     }
     data.libraryCompliance = compliance(vars, scenario);
   }
-  if (/\bsettings\b/.test(query)) data.settings = scenario === 'unset' ? SETTINGS.filter((s) => !s.key.startsWith('library.')) : SETTINGS;
+  if (/\bsettings\b/.test(query)) data.settings = SETTINGS;
   if (/\bretryPolicy\b/.test(query)) data.retryPolicy = POLICY;
   if (/\bprocessingOverview\b/.test(query)) {
-    data.processingOverview = { steps: [], failed: [], failedTotal: 0, retry: POLICY, reencodeQueue: reencodeQueue(scenario) };
+    data.processingOverview = { steps: [], failed: [], failedTotal: 0, retry: POLICY, reencodeQueue: reencodeQueue() };
   }
   // the other tabs read, empty: enough for each to render beside this one
   if (/\bscanJobs\b/.test(query)) data.scanJobs = [];
