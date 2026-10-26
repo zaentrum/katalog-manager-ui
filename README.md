@@ -59,10 +59,12 @@ it runs. At the top, one line says when the check ran, how many titles it
 checked and how many break a rule (`checkedTitles`), with **check again**
 (`refreshCompliance`); a banner says what the report leaves out. Then how
 many titles break each rule, by the rule's tag, with their packages' size
-now and the check's estimate of it after ("≈ after"; a rule lists its titles
-alone), and the re-encode queue in numbers: queued, processing, needs
-attention and processed again. Then each worker's rules as it reported them,
-in words with the raw config under details, and when, or that it never did.
+now and the check's estimate of it after, over those with an estimate ("≈
+after"; a rule lists its titles alone), and under them how many have none,
+each title once whatever rules it breaks ("3 titles have no estimate"); and
+the re-encode queue in numbers: queued, processing, needs attention and
+processed again. Then each worker's rules as it reported them, in words
+with the raw config under details, and when, or that it never did.
 
 The titles follow, movies by default, filtered by kind, rules and a search
 ("230 of 279" while something filters), a hundred at a time, a row each with
@@ -128,7 +130,7 @@ one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
 1,000 GB.
 
 It needs a katalog-manager with `libraryCompliance` (with `sort` and
-`descending`, `checkedTitles`, `matching` and `queueable` with
+`descending`, `checkedTitles`, `matching`, `queueable` and `summary` with
 `withoutEstimate` (and the queueable set's `fingerprint`), `queue`,
 `processing`, the rows' measures, `outcome`, `queueReason`, `queueDetail`
 and `reworkBlocked`, and the `detail` of each finding and of each rule), its
