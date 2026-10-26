@@ -2,6 +2,7 @@
 // transcoder and the packager report, and processing them again through the
 // re-encode queue. No React, no DOM, so `npm test` runs them under node as
 // they are.
+import { episodeLabel } from './people.ts';
 import { ago, failedTitle } from './processing.ts';
 
 // ---- katalog-manager's libraryCompliance, as it answers it
@@ -15,6 +16,10 @@ export type ComplianceRule =
   | 'IMAGE_SUBTITLES_MISSING'
   | 'VIDEO_NOT_HEVC';
 export type ComplianceKind = 'MOVIE' | 'EPISODE';
+/** What processing a title again does to it, as katalog-manager tells it. */
+export type ComplianceOutcome = 'REENCODE' | 'REPACKAGE' | 'FIRST_PACKAGE' | 'BLOCKED';
+/** The orders katalog-manager sorts the report in. */
+export type ComplianceSort = 'PACKAGE_SIZE' | 'ORIGINAL_SIZE' | 'SAVING' | 'VIDEO_BITRATE' | 'TITLE';
 
 /** A setting a worker reported, as it names it: its value in words, and the
  *  raw config when the words aren't it ("source:hevc"). */
@@ -62,6 +67,16 @@ export interface ComplianceRow {
   queueReason: string | null; // why it waits or failed there, in a sentence
   queueDetail: string | null; // the technical part of that ("ffmpeg exited 1")
   reworkBlocked: string | null; // why processing it again can't help, a clause ("its file is a disc image"); null when it can
+  resolution: string | null; // "3840×2160": the package's video, else the original's
+  videoCodec: string | null; // "HEVC", "H.264"
+  videoBitrate: number | null; // bit/s, the video's average, the package's else the original's
+  videoBitrateEstimated: boolean; // the bit rate is worked out from the size and the duration
+  bitrateCap: number | null; // bit/s, the transcoder's cap for the title's kind and height; null when not reported
+  sizeCap: number | null; // bytes, the transcoder's cap of a movie's file; null for an episode, or when not reported
+  durationSeconds: number | null;
+  packageAudio: string | null; // "5.1 E-AC-3 + 2.0 AAC"
+  originalAudio: string | null; // "7.1 TrueHD"
+  outcome: ComplianceOutcome | null;
   evaluatedAt: string;
 }
 export interface ComplianceSummary {
@@ -122,11 +137,6 @@ export function fmtCount(n: number): string {
   return n.toLocaleString('en-US');
 }
 
-/** s with its first letter in capitals: the body face's sentence case. */
-export function sentenceCase(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
 /** The titles of a kind, counted: "1 movie", "230 movies", "12 titles". */
 export function titlesOf(kind: ComplianceKind | '', n: number): string {
   const [one, many] = kind === 'MOVIE' ? ['movie', 'movies'] : kind === 'EPISODE' ? ['episode', 'episodes'] : ['title', 'titles'];
@@ -147,26 +157,30 @@ export const RULE_ORDER: readonly ComplianceRule[] = [
   'IMAGE_SUBTITLES_MISSING',
 ];
 
-const RULE_LABELS: Record<ComplianceRule, string> = {
+// The rules' tags, short and technical, in the monospace voice; names keep
+// their case.
+const RULE_TAGS: Record<ComplianceRule, string> = {
   NOT_PACKAGED: 'not packaged',
-  PACKAGING_FAILED: 'packaging failed',
-  OVER_BITRATE_CAP: 'over the bit rate cap',
-  OVER_SIZE_CAP: 'over the size cap',
-  VIDEO_NOT_HEVC: 'video not HEVC',
-  NO_SURROUND: 'no surround track',
-  IMAGE_SUBTITLES_MISSING: 'image subtitles missing',
+  PACKAGING_FAILED: 'failed',
+  OVER_BITRATE_CAP: 'bit rate > cap',
+  OVER_SIZE_CAP: 'copy > cap',
+  VIDEO_NOT_HEVC: 'not HEVC',
+  NO_SURROUND: 'no 5.1',
+  IMAGE_SUBTITLES_MISSING: 'image subs',
 };
 
-/** What a title breaking the rule is, in a few words, in the monospace
- *  voice; a rule the console does not know reads as its name. */
-export function ruleLabel(rule: string): string {
-  return RULE_LABELS[rule as ComplianceRule] ?? rule.toLowerCase().replace(/_/g, ' ');
+/** A rule's tag: "bit rate > cap", "not HEVC"; the size cap's with the cap
+ *  the transcoder reported, "copy > 15 GiB", when it is known (sizeCap, in
+ *  bytes). A rule the console does not know reads as its name. */
+export function ruleTag(rule: string, sizeCap?: number | null): string {
+  if (rule === 'OVER_SIZE_CAP' && sizeCap != null && sizeCap > 0) return `copy > ${fmtGiB(sizeCap)}`;
+  return RULE_TAGS[rule as ComplianceRule] ?? rule.toLowerCase().replace(/_/g, ' ');
 }
 
-/** A rule as the rule filter offers it, in the body face: "Over the bit rate
- *  cap". */
-export function ruleOption(rule: string): string {
-  return sentenceCase(ruleLabel(rule));
+/** The transcoder's cap of a movie's file, as the rows report it: every
+ *  movie's row carries it; null while none is loaded. */
+export function sizeCapOf(rows: readonly Pick<ComplianceRow, 'sizeCap'>[]): number | null {
+  return rows.find((r) => r.sizeCap != null && r.sizeCap > 0)?.sizeCap ?? null;
 }
 
 /** xs in RULE_ORDER; a rule the console does not know comes after, by name. */
@@ -260,49 +274,81 @@ export function rowTitle(r: Pick<ComplianceRow, 'title' | 'year' | 'kind' | 'ser
   return r.year != null ? `${title} (${r.year})` : title;
 }
 
-/** A finding as the row says it: katalog-manager's sentence; without one,
- *  the rule and what was measured against its limit. */
-export function findingText(f: ComplianceFinding): string {
+/** A row's title as the table's first column names it: a movie with its
+ *  year, "Vellmar Station (2019)"; an episode by its series and its place in
+ *  it, "Pellam Bay · S01E02". */
+export function rowName(r: Pick<ComplianceRow, 'title' | 'year' | 'kind' | 'seriesTitle' | 'season' | 'episode'>): string {
+  if (r.kind !== 'EPISODE') return rowTitle(r);
+  const parts = [r.seriesTitle?.trim(), episodeLabel(r.season, r.episode)].filter((p): p is string => !!p);
+  return parts.length ? parts.join(' · ') : rowTitle(r);
+}
+
+/** A finding in words, as the row's details give it: katalog-manager's
+ *  sentence; without one, what was measured against the rule's limit. */
+export function findingText(f: Pick<ComplianceFinding, 'text' | 'measured' | 'limit'>): string {
   const text = f.text.trim();
   if (text) return text;
-  const facts = [f.measured?.trim(), f.limit?.trim() ? `limit ${f.limit.trim()}` : ''].filter((x): x is string => !!x);
-  return sentenceCase(facts.length ? `${ruleLabel(f.rule)}: ${facts.join(', ')}` : ruleLabel(f.rule));
+  return [f.measured?.trim(), f.limit?.trim() ? `limit ${f.limit.trim()}` : ''].filter((x): x is string => !!x).join(', ');
 }
 
 const CAP_RULES: readonly string[] = ['OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'VIDEO_NOT_HEVC'];
 
-/** What processing a title again does to it, from the rules it breaks, next
- *  to its findings: packaged for the first time; re-encoded, over a cap of
- *  the transcoder's; packaged again otherwise, its video copied where the
- *  transcoder's caps were checked and it is within them (capsChecked); ''
- *  for rules the console does not know. A title whose packaging failed is
- *  packaged again when it has a package, else for the first time. */
-export function outcomeText(r: Pick<ComplianceRow, 'findings' | 'packageBytes'>, capsChecked: boolean): string {
+const OUTCOME_TAGS: Record<ComplianceOutcome, string> = {
+  REENCODE: 're-encode',
+  REPACKAGE: 'repackage',
+  FIRST_PACKAGE: 'first package',
+  BLOCKED: 'blocked',
+};
+
+/** What processing a title again does to it, as a tag: katalog-manager's
+ *  outcome, "re-encode", "repackage", "first package", or "blocked" for a
+ *  title processing again can't help. A server that tells no outcome gets
+ *  one from the rules the title breaks: packaged for the first time when it
+ *  never was, re-encoded over a cap of the transcoder's, packaged again
+ *  otherwise (a failed packaging with a package too); '' for rules the
+ *  console does not know. */
+export function outcomeTag(r: Pick<ComplianceRow, 'findings' | 'packageBytes' | 'reworkBlocked' | 'outcome'>): string {
+  if (isBlocked(r)) return OUTCOME_TAGS.BLOCKED;
+  if (r.outcome && OUTCOME_TAGS[r.outcome]) return OUTCOME_TAGS[r.outcome];
   const rules = new Set<string>(r.findings.map((f) => f.rule));
   const packaged = r.packageBytes != null && r.packageBytes > 0;
-  const again = capsChecked ? 'Packaged again; the video is copied' : 'Packaged again';
-  if (rules.has('NOT_PACKAGED')) return 'Packaged for the first time';
-  if (CAP_RULES.some((c) => rules.has(c))) return 'Re-encoded, then packaged again';
-  if (rules.has('PACKAGING_FAILED')) return packaged ? again : 'Packaged for the first time';
-  if (rules.has('NO_SURROUND') || rules.has('IMAGE_SUBTITLES_MISSING')) return again;
+  if (rules.has('NOT_PACKAGED')) return OUTCOME_TAGS.FIRST_PACKAGE;
+  if (CAP_RULES.some((c) => rules.has(c))) return OUTCOME_TAGS.REENCODE;
+  if (rules.has('PACKAGING_FAILED')) return packaged ? OUTCOME_TAGS.REPACKAGE : OUTCOME_TAGS.FIRST_PACKAGE;
+  if (rules.has('NO_SURROUND') || rules.has('IMAGE_SUBTITLES_MISSING')) return OUTCOME_TAGS.REPACKAGE;
   return '';
 }
 
-/** The outcome line under a row's findings: what processing it again does,
- *  with its package at most after when there is an estimate: "Re-encoded,
- *  then packaged again, at most 11.8 GB". A title processing again can't
- *  help is promised nothing: why, as katalog-manager says it, "Can’t be
- *  processed again: its file is a disc image.", and no estimate. */
-export function outcomeLine(
-  r: Pick<ComplianceRow, 'findings' | 'packageBytes' | 'estimatedBytes' | 'reworkBlocked'>,
-  capsChecked: boolean,
-): string {
-  const blocked = blockedReason(r);
-  if (blocked) return `Can’t be processed again: ${blocked}.`;
-  const outcome = outcomeText(r, capsChecked);
-  const after = r.estimatedBytes != null && r.estimatedBytes > 0 ? `at most ${fmtBytes(r.estimatedBytes)}` : '';
-  if (!after) return outcome;
-  return outcome ? `${outcome}, ${after}` : sentenceCase(after);
+/** A bit rate as the table writes it, in Mbit/s with one decimal and no
+ *  trailing zero, kbit/s below 1 Mbit/s: "34.8 Mbit/s", "8 Mbit/s"; '—' for
+ *  none. */
+export function fmtBitrate(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps) || bps <= 0) return '—';
+  if (bps < 1e6) return `${Math.max(1, Math.round(bps / 1e3))}${NBSP}kbit/s`;
+  return tenths(bps / 1e6, 'Mbit/s');
+}
+
+/** A row's measured bit rate, one worked out from the size and the duration
+ *  marked: "≈ 34.8 Mbit/s". */
+export function bitrateText(r: Pick<ComplianceRow, 'videoBitrate' | 'videoBitrateEstimated'>): string {
+  const rate = fmtBitrate(r.videoBitrate);
+  return r.videoBitrateEstimated && rate !== '—' ? `≈${NBSP}${rate}` : rate;
+}
+
+/** A package's audio as the table writes it, a track a line, those after
+ *  the first with the "+" that joins them: "5.1 E-AC-3", "+ 2.0 AAC"; '—'
+ *  for none. */
+export function audioLines(audio: string | null | undefined): string[] {
+  const tracks = (audio ?? '').split('+').map((t) => t.trim()).filter(Boolean);
+  return tracks.length ? tracks.map((t, i) => (i ? `+ ${t}` : t)) : ['—'];
+}
+
+/** What processing a title again frees at least: its package less the most
+ *  it is to take after; null when that isn't known, or frees nothing. */
+export function savingBytes(r: Pick<ComplianceRow, 'packageBytes' | 'estimatedBytes'>): number | null {
+  if (r.packageBytes == null || r.estimatedBytes == null || r.packageBytes <= 0 || r.estimatedBytes <= 0) return null;
+  const saving = r.packageBytes - r.estimatedBytes;
+  return saving > 0 ? saving : null;
 }
 
 /** rows, then those of more not among them (a page loaded after). */
@@ -320,25 +366,32 @@ export function inQueue(queue: string | null | undefined): boolean {
 }
 
 /** Why processing a title again can't help, as katalog-manager says it, a
- *  clause ("its file is a disc image"); null when it can. */
+ *  clause ("its file is a disc image"); null when it can, or when it says
+ *  no reason. */
 export function blockedReason(r: Pick<ComplianceRow, 'reworkBlocked'>): string | null {
   return r.reworkBlocked?.trim().replace(/\.$/, '') || null;
 }
 
+/** True for a title processing again can't help: the server's reason, or
+ *  its outcome. */
+export function isBlocked(r: Pick<ComplianceRow, 'reworkBlocked' | 'outcome'>): boolean {
+  return !!blockedReason(r) || r.outcome === 'BLOCKED';
+}
+
 /** True for a title that can be ticked and processed again: the queue
  *  doesn't hold it, and processing it again can help. */
-export function canProcess(r: Pick<ComplianceRow, 'queue' | 'reworkBlocked'>): boolean {
-  return !inQueue(r.queue) && !blockedReason(r);
+export function canProcess(r: Pick<ComplianceRow, 'queue' | 'reworkBlocked' | 'outcome'>): boolean {
+  return !inQueue(r.queue) && !isBlocked(r);
 }
 
 /** The names of a row's checkbox and of its button: what each does, and,
  *  for a title processing again can't help, why they are off. */
 export function rowControlNames(
-  r: Pick<ComplianceRow, 'title' | 'year' | 'kind' | 'seriesTitle' | 'season' | 'episode' | 'reworkBlocked'>,
+  r: Pick<ComplianceRow, 'title' | 'year' | 'kind' | 'seriesTitle' | 'season' | 'episode' | 'reworkBlocked' | 'outcome'>,
 ): { select: string; process: string } {
   const title = rowTitle(r);
-  const blocked = blockedReason(r);
-  const why = blocked ? `. Can’t be processed again: ${blocked}.` : '';
+  const reason = blockedReason(r);
+  const why = reason ? `. Can’t be processed again: ${reason}.` : isBlocked(r) ? '. Can’t be processed again.' : '';
   return { select: `select ${title}${why}`, process: `process again: ${title}${why}` };
 }
 
@@ -365,13 +418,33 @@ export function rowStatus(
   }
 }
 
-/** A row's technical part, for under its details and never in its lines:
- *  each finding's (a tool's output, a codec's id) by its rule, then the
- *  queue's, by the status it explains. None when there is none. */
-export function rowDetails(r: Pick<ComplianceRow, 'findings' | 'queue' | 'queueDetail'>): string[] {
-  const lines = r.findings.flatMap((f) => (f.detail?.trim() ? [`${ruleLabel(f.rule)}: ${f.detail.trim()}`] : []));
+/** A line of a row's details: what it is about (a rule's tag, "blocked",
+ *  "status", "original audio"), the words, and the technical part. */
+export interface DetailLine {
+  label: string;
+  text: string;
+  detail: string | null;
+}
+
+/** A row's details, what the table's columns don't say: each finding in
+ *  katalog-manager's words with its technical part (a tool's output, a
+ *  codec's id), by its rule's tag; why processing it again can't help; the
+ *  queue's technical part, by the status it explains; and the original's
+ *  audio. */
+export function rowDetails(
+  r: Pick<ComplianceRow, 'findings' | 'queue' | 'queueDetail' | 'reworkBlocked' | 'outcome' | 'sizeCap' | 'originalAudio'>,
+): DetailLine[] {
+  const lines: DetailLine[] = inRuleOrder(r.findings).map((f) => ({
+    label: ruleTag(f.rule, r.sizeCap),
+    text: findingText(f),
+    detail: f.detail?.trim() || null,
+  }));
+  const reason = blockedReason(r);
+  if (reason || isBlocked(r)) lines.push({ label: 'blocked', text: reason ?? '', detail: null });
   const queued = r.queueDetail?.trim();
-  if (queued && rowStatus(r.queue)) lines.push(`status: ${queued}`);
+  if (queued && rowStatus(r.queue)) lines.push({ label: 'status', text: '', detail: queued });
+  const audio = r.originalAudio?.trim();
+  if (audio) lines.push({ label: 'original audio', text: audio, detail: null });
   return lines;
 }
 
@@ -637,6 +710,89 @@ export function fmtBytes(n: number | null | undefined): string {
 /** A size of the list: '—' for none or nothing. */
 export function sizeText(n: number | null | undefined): string {
   return n != null && n > 0 ? fmtBytes(n) : '—';
+}
+
+const GiB = 1024 ** 3;
+
+/** A cap as the transcoder sets it, in GiB, one decimal and no trailing
+ *  zero: "15 GiB". */
+export function fmtGiB(n: number): string {
+  return tenths(n / GiB, 'GiB');
+}
+
+// ---- the order, the CSV and the check
+
+/** Each order the table sorts in, and the way it goes at first: the biggest
+ *  first, titles from A. */
+export const SORT_FIRST: Record<ComplianceSort, 'descending' | 'ascending'> = {
+  PACKAGE_SIZE: 'descending',
+  ORIGINAL_SIZE: 'descending',
+  SAVING: 'descending',
+  VIDEO_BITRATE: 'descending',
+  TITLE: 'ascending',
+};
+
+export interface ComplianceOrder {
+  sort: ComplianceSort;
+  descending: boolean;
+}
+
+/** The order the table opens in: the biggest package first. */
+export const DEFAULT_ORDER: ComplianceOrder = { sort: 'PACKAGE_SIZE', descending: true };
+
+/** The order after a column's header is pressed: that column, the way it
+ *  goes at first; pressed again, the other way. */
+export function nextOrder(o: ComplianceOrder, sort: ComplianceSort): ComplianceOrder {
+  if (o.sort === sort) return { sort, descending: !o.descending };
+  return { sort, descending: SORT_FIRST[sort] === 'descending' };
+}
+
+/** A column header's sort for aria-sort: the way the table is sorted by it,
+ *  or none. */
+export function ariaSort(o: ComplianceOrder, sort: ComplianceSort): 'ascending' | 'descending' | 'none' {
+  return o.sort !== sort ? 'none' : o.descending ? 'descending' : 'ascending';
+}
+
+/** The query of katalog-manager's CSV of the report: the filter and the
+ *  order the table shows, the rules by comma. */
+export function csvQuery(f: ComplianceFilter, o: ComplianceOrder): string {
+  const v = filterVariables(f);
+  const q = new URLSearchParams();
+  if (v.kind) q.set('kind', v.kind);
+  if (v.rules) q.set('rules', v.rules.join(','));
+  if (v.search) q.set('search', v.search);
+  q.set('sort', o.sort);
+  q.set('descending', String(o.descending));
+  return q.toString();
+}
+
+/** Where katalog-manager serves the report as a CSV, every row the filter
+ *  matches in the table's order: under /api/manage like the GraphQL
+ *  endpoint, with the same auth. */
+export function csvUrl(f: ComplianceFilter, o: ComplianceOrder): string {
+  return `/api/manage/compliance.csv?${csvQuery(f, o)}`;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** The CSV's file name: the kind and when the check ran, in the browser's
+ *  time, "rules-movies-2026-10-26T1343.csv"; the time of the download when
+ *  the check's is not known. */
+export function csvFileName(kind: ComplianceKind | '', checkedAt: string | null, now: Date = new Date()): string {
+  const what = KIND_OPTIONS.find((k) => k.value === kind)?.label ?? 'all';
+  const at = checkedAt && !Number.isNaN(Date.parse(checkedAt)) ? new Date(checkedAt) : now;
+  const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}${pad(at.getMinutes())}`;
+  return `rules-${what}-${stamp}.csv`;
+}
+
+/** The check's line under the tab's heading, after when it ran: how many
+ *  titles it checked and how many of them break a rule, as far as they are
+ *  known: "2,409 titles checked", "279 break a rule". */
+export function checkCounts(checked: number | null | undefined, breaking: number | null | undefined): string[] {
+  const parts: string[] = [];
+  if (checked != null) parts.push(`${fmtCount(checked)} ${checked === 1 ? 'title' : 'titles'} checked`);
+  if (breaking != null) parts.push(`${fmtCount(breaking)} ${breaking === 1 ? 'breaks' : 'break'} a rule`);
+  return parts;
 }
 
 

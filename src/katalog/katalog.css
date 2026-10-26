@@ -418,17 +418,16 @@ a.kat__rowlink:focus-visible {
   min-width: 0;
   color: var(--fg, #e6e6e6);
 }
-.kat__settings .kat__details,
-.kat__findings .kat__details {
+.kat__settings .kat__details {
   margin-top: 2px;
 }
-.kat__checked {
+/* the check in one line: when it ran, its counts, and check again */
+.kat__checkline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border, #1f2633);
+  gap: 4px 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* a banner: about the list as a whole, a bar in its state's colour */
@@ -497,6 +496,7 @@ a.kat__rowlink:focus-visible {
   color: var(--cloud-blue, #58a6ff);
   font: inherit;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 .kat__rulebtn:hover {
@@ -614,28 +614,59 @@ a.kat__rowlink:focus-visible {
   white-space: nowrap;
 }
 
-/* a row: its findings in the body face with what processing again does,
-   its status with the detail under it */
-.kat__findings {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 220px;
-  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
-  font-size: 13px;
-  line-height: 1.4;
+/* the report's table: a title's measures in columns, numbers to the right
+   in figures of one width, the rules it breaks as tags, and its status with
+   the detail under it */
+.kat__num,
+.kat__nowrap {
+  white-space: nowrap;
 }
-.kat__findings ul {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.kat__num {
+  font-variant-numeric: tabular-nums;
 }
-.kat__outcome {
+.kat__results {
   font-size: 12px;
-  color: var(--fg-muted, #aeb8c2);
+}
+.kat__results .nc-table__th,
+.kat__results .nc-table__td {
+  padding: 4px 6px;
+}
+/* a header of two words may take two lines */
+.kat__results .nc-table__th {
+  white-space: normal;
+  vertical-align: bottom;
+  line-height: 1.3;
+}
+.kat__titlecell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 130px;
+  max-width: 220px;
+}
+/* the package's tracks, a line each */
+.kat__audio {
+  display: flex;
+  flex-direction: column;
+  white-space: nowrap;
+}
+.kat__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 11ch;
+}
+.kat__tag {
+  padding: 0 5px;
+  border: 1px solid var(--border-2, #2a3142);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--fg-2, #c9d1d9);
+  white-space: nowrap;
+}
+.kat__blocked {
+  color: var(--signal-amber, #f2b233);
 }
 .kat__status {
   display: flex;
@@ -652,6 +683,126 @@ a.kat__rowlink:focus-visible {
   font-family: var(--ff-ui, Inter, system-ui, sans-serif);
   font-size: 12px;
   color: var(--fg-muted, #aeb8c2);
+}
+
+/* a header that sorts: its words and an arrow, the way it sorts */
+.kat__sortbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.kat__sortbtn svg {
+  flex: none;
+  opacity: 0.45;
+}
+.kat__sortbtn:hover {
+  color: var(--fg, #e6e6e6);
+}
+.kat__sortbtn--on {
+  color: var(--fg, #e6e6e6);
+}
+.kat__sortbtn--on svg {
+  opacity: 1;
+  color: var(--cloud-blue, #58a6ff);
+}
+.kat__sortbtn:focus-visible,
+.kat__disclosure:focus-visible {
+  outline: 2px solid var(--cloud-cyan, #00a4dc);
+  outline-offset: 2px;
+}
+
+/* a row's details: the toggle under its title, and a row of their own under
+   it that stays in view on a table that scrolls sideways */
+.kat__disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  color: var(--fg-muted, #aeb8c2);
+  cursor: pointer;
+}
+.kat__disclosure svg {
+  transition: transform 0.12s ease;
+}
+.kat__disclosure--open svg {
+  transform: rotate(90deg);
+}
+.kat__details-row > td {
+  background: var(--bg-2, #0d1117);
+}
+.kat__rowdetails {
+  position: sticky;
+  left: 8px;
+  box-sizing: border-box;
+  /* clear of the fade at the right edge */
+  max-width: calc(var(--kat-visible, 100%) - 48px);
+  padding: 4px 0 6px 2px;
+}
+.kat__detail-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+}
+.kat__detail-list dt {
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--fg-muted, #aeb8c2);
+  white-space: nowrap;
+}
+.kat__detail-list dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin: 0;
+  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg-2, #c9d1d9);
+}
+.kat__detail-list code {
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  color: var(--fg-dim, #6e7787);
+}
+
+/* the first two columns stay while the table scrolls sideways: the
+   checkbox and the title */
+.kat__results .kat__col-select,
+.kat__results .kat__col-title {
+  position: sticky;
+  z-index: 1;
+  background: var(--surface, #11161f);
+}
+.kat__results thead .kat__col-select,
+.kat__results thead .kat__col-title {
+  background: var(--bg-2, #0d1117);
+}
+.kat__results .nc-table__tr:hover .kat__col-select,
+.kat__results .nc-table__tr:hover .kat__col-title {
+  background: var(--surface-2, #161b26);
+}
+.kat__results .kat__col-select {
+  left: 0;
+  width: 16px;
+  min-width: 16px;
+}
+.kat__results .kat__col-title {
+  left: 28px;
 }
 
 /* a table wider than the screen: the edge it goes on past fades */
@@ -672,6 +823,7 @@ a.kat__rowlink:focus-visible {
 .kat__hscroll[data-more='right']::after,
 .kat__hscroll[data-more='both']::after {
   right: 1px;
+  z-index: 2;
   background: linear-gradient(to left, color-mix(in srgb, var(--bg, #0b0f19) 92%, transparent), transparent);
 }
 .kat__hscroll[data-more='left']::before,
@@ -680,17 +832,41 @@ a.kat__rowlink:focus-visible {
   z-index: 1;
   background: linear-gradient(to right, color-mix(in srgb, var(--bg, #0b0f19) 92%, transparent), transparent);
 }
-.kat__cell-title {
-  display: inline-block;
-  min-width: 160px;
+/* with sticky columns, the left edge is the title column's */
+.kat__hscroll--sticky[data-more='left']::before,
+.kat__hscroll--sticky[data-more='both']::before {
+  content: none;
 }
-.kat__nowrap {
-  white-space: nowrap;
+.kat__hscroll--sticky[data-more='left'] .kat__col-title::after,
+.kat__hscroll--sticky[data-more='both'] .kat__col-title::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -14px;
+  bottom: 0;
+  width: 14px;
+  pointer-events: none;
+  background: linear-gradient(to right, color-mix(in srgb, var(--bg, #0b0f19) 70%, transparent), transparent);
 }
 .kat__more {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-top: 12px;
+}
+/* the filters and the table, wider than the column above them where the
+   screen is: up to 1,600 pixels, 20 from its edges */
+.kat__wide > .kat__filterbar + * {
+  margin-top: 16px;
+}
+.kat__wide {
+  --kat-wide: min(calc(100vw - 40px), 1600px);
+}
+@media (min-width: 1240px) {
+  .kat__wide {
+    width: var(--kat-wide);
+    margin-left: calc(50% - var(--kat-wide) / 2);
+  }
 }
 
 /* in the table's place: which kind of empty, and at most one way forward */

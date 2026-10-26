@@ -3,37 +3,47 @@ import { test } from 'node:test';
 import {
   CLEARED_FILTER,
   DEFAULT_FILTER,
+  DEFAULT_ORDER,
   KIND_OPTIONS,
   NO_SELECTION,
   RULE_ORDER,
   announceText,
   appendRows,
+  ariaSort,
+  bitrateText,
   blockedReason,
   canProcess,
+  checkCounts,
   checkState,
   confirmBody,
   confirmFacts,
   countText,
+  csvFileName,
+  csvQuery,
+  csvUrl,
   emptyState,
   filterKey,
   filterVariables,
   findingText,
+  fmtBitrate,
   fmtBytes,
   fmtCount,
+  fmtGiB,
   hiddenCount,
   inQueue,
   inRuleOrder,
+  isBlocked,
   isFiltering,
   isOnlyRule,
   isSelected,
   loadFailure,
   matchingScope,
+  nextOrder,
   notCheckedHere,
   notQueuedBanner,
   nowAndAfter,
   offersMatching,
-  outcomeLine,
-  outcomeText,
+  outcomeTag,
   pageState,
   pickRule,
   pollMs,
@@ -42,15 +52,16 @@ import {
   queuedToasts,
   rowControlNames,
   rowDetails,
+  rowName,
   rowStatus,
   rowTitle,
   rowsScope,
-  ruleLabel,
-  ruleOption,
+  ruleTag,
+  savingBytes,
   select,
   selectedCount,
   selectionText,
-  sentenceCase,
+  sizeCapOf,
   sizeText,
   staleText,
   titlesOf,
@@ -62,6 +73,7 @@ import {
 } from './compliance.ts';
 
 const GB = 1e9;
+const GiB = 1024 ** 3;
 const NB = ' ';
 
 const row = (r: Partial<ComplianceRow>): ComplianceRow => ({
@@ -81,6 +93,16 @@ const row = (r: Partial<ComplianceRow>): ComplianceRow => ({
   queueReason: null,
   queueDetail: null,
   reworkBlocked: null,
+  resolution: '3840×2160',
+  videoCodec: 'HEVC',
+  videoBitrate: 58e6,
+  videoBitrateEstimated: false,
+  bitrateCap: 14e6,
+  sizeCap: 15 * GiB,
+  durationSeconds: 7_800,
+  packageAudio: '5.1 E-AC-3 + 2.0 AAC',
+  originalAudio: '7.1 TrueHD',
+  outcome: null,
   evaluatedAt: '2026-10-26T08:00:00Z',
   ...r,
 });
@@ -94,21 +116,26 @@ test('counts carry thousands separators, and the titles of a kind are counted in
   assert.equal(titlesOf('EPISODE', 2), '2 episodes');
   assert.equal(titlesOf('', 1), '1 title');
   assert.equal(titlesOf('', 2409), '2,409 titles');
-  assert.equal(sentenceCase('video not HEVC'), 'Video not HEVC');
 });
 
-test('every rule has a label in the monospace voice and an option in the body face, in the tab’s order', () => {
-  assert.deepEqual(RULE_ORDER.map(ruleLabel), [
+test('every rule has a short tag in the monospace voice, the size cap’s with the cap the transcoder reported, in the tab’s order', () => {
+  assert.deepEqual(RULE_ORDER.map((r) => ruleTag(r)), [
     'not packaged',
-    'packaging failed',
-    'over the bit rate cap',
-    'over the size cap',
-    'video not HEVC',
-    'no surround track',
-    'image subtitles missing',
+    'failed',
+    'bit rate > cap',
+    'copy > cap',
+    'not HEVC',
+    'no 5.1',
+    'image subs',
   ]);
-  assert.deepEqual(RULE_ORDER.map(ruleOption).slice(2, 5), ['Over the bit rate cap', 'Over the size cap', 'Video not HEVC']);
-  assert.equal(ruleLabel('AUDIO_TOO_LOUD'), 'audio too loud');
+  // the cap as it is set: 15 GiB, never typed in
+  assert.equal(ruleTag('OVER_SIZE_CAP', 15 * GiB), `copy > 15${NB}GiB`);
+  assert.equal(ruleTag('OVER_SIZE_CAP', 22.5 * GiB), `copy > 22.5${NB}GiB`);
+  assert.equal(ruleTag('OVER_SIZE_CAP', null), 'copy > cap');
+  assert.equal(ruleTag('AUDIO_TOO_LOUD'), 'audio too loud');
+  // every movie's row carries the cap; an episode's none
+  assert.equal(sizeCapOf([row({ kind: 'EPISODE', sizeCap: null }), row({ sizeCap: 15 * GiB })]), 15 * GiB);
+  assert.equal(sizeCapOf([row({ kind: 'EPISODE', sizeCap: null })]), null);
   assert.deepEqual(inRuleOrder(['NO_SURROUND', 'ZZ_NEW', 'NOT_PACKAGED', 'AA_NEW', 'OVER_SIZE_CAP']), [
     'NOT_PACKAGED',
     'OVER_SIZE_CAP',
@@ -158,91 +185,89 @@ test('a rule is ticked and unticked; the summary picks one alone, and the same a
   assert.equal(isOnlyRule(['OVER_SIZE_CAP', 'NO_SURROUND'], 'OVER_SIZE_CAP'), false);
 });
 
-test('a movie reads with its year, an episode with its series and place', () => {
+test('a movie reads with its year, an episode with its series and place, the table’s column without the episode’s title', () => {
   assert.equal(rowTitle(row({})), 'Vellmar Station (2019)');
   assert.equal(rowTitle(row({ year: null })), 'Vellmar Station');
   assert.equal(rowTitle(row({ title: ' ', year: null })), '(untitled)');
-  assert.equal(
-    rowTitle(row({ kind: 'EPISODE', title: 'Chapter 2', seriesTitle: 'Pellam Bay', season: 1, episode: 2 })),
-    'Pellam Bay · S01E02 · Chapter 2',
-  );
+  const episode = row({ kind: 'EPISODE', title: 'Chapter 2', seriesTitle: 'Pellam Bay', season: 1, episode: 2 });
+  assert.equal(rowTitle(episode), 'Pellam Bay · S01E02 · Chapter 2');
+  assert.equal(rowName(episode), 'Pellam Bay · S01E02');
+  assert.equal(rowName(row({})), 'Vellmar Station (2019)');
+  // an episode with nothing to place it: its own title
+  assert.equal(rowName({ ...episode, seriesTitle: null, season: null, episode: null }), 'Chapter 2');
 });
 
-test('a finding says katalog-manager’s sentence, else the rule and what was measured, in sentence case; its detail is never in it', () => {
+test('the measures in figures: bit rates in Mbit/s, an estimated one marked, the cap, the saving', () => {
+  assert.equal(fmtBitrate(34.8e6), `34.8${NB}Mbit/s`);
+  assert.equal(fmtBitrate(8e6), `8${NB}Mbit/s`);
+  assert.equal(fmtBitrate(14.04e6), `14${NB}Mbit/s`);
+  assert.equal(fmtBitrate(640e3), `640${NB}kbit/s`);
+  for (const none of [null, undefined, 0, -1, NaN]) assert.equal(fmtBitrate(none), '—', String(none));
+  assert.equal(bitrateText(row({ videoBitrate: 34.8e6 })), `34.8${NB}Mbit/s`);
+  assert.equal(bitrateText(row({ videoBitrate: 34.8e6, videoBitrateEstimated: true })), `≈${NB}34.8${NB}Mbit/s`);
+  assert.equal(bitrateText(row({ videoBitrate: null, videoBitrateEstimated: true })), '—');
+  assert.equal(fmtGiB(15 * GiB), `15${NB}GiB`);
+  // what processing again frees at least: the package less the most it takes after
+  assert.equal(savingBytes(row({})), 47 * GB);
+  assert.equal(savingBytes(row({ estimatedBytes: null })), null);
+  assert.equal(savingBytes(row({ packageBytes: null })), null);
+  assert.equal(savingBytes(row({ packageBytes: 10 * GB, estimatedBytes: 12 * GB })), null);
+});
+
+test('a finding in words for the row’s details: katalog-manager’s sentence, else what was measured against the limit', () => {
   const f = {
-    rule: 'OVER_BITRATE_CAP' as const,
     text: 'The video runs at 58 Mbit/s, above the 14 Mbit/s the transcoder allows for a 2160p movie.',
     measured: '58 Mbit/s',
     limit: '14 Mbit/s',
-    detail: null,
   };
   assert.equal(findingText(f), 'The video runs at 58 Mbit/s, above the 14 Mbit/s the transcoder allows for a 2160p movie.');
-  assert.equal(findingText({ ...f, text: '  ' }), 'Over the bit rate cap: 58 Mbit/s, limit 14 Mbit/s');
-  assert.equal(findingText({ rule: 'NOT_PACKAGED', text: '', measured: null, limit: null, detail: null }), 'Not packaged');
-  const h264 = { rule: 'VIDEO_NOT_HEVC' as const, text: 'The video is H.264, and the transcoder makes every video HEVC.', measured: 'H.264', limit: 'HEVC', detail: 'avc1.640028' };
-  assert.equal(findingText(h264), 'The video is H.264, and the transcoder makes every video HEVC.');
-  assert.equal(findingText({ ...h264, text: '' }), 'Video not HEVC: H.264, limit HEVC');
+  assert.equal(findingText({ ...f, text: '  ' }), '58 Mbit/s, limit 14 Mbit/s');
+  assert.equal(findingText({ text: '', measured: null, limit: null }), '');
 });
 
-test('a row’s technical part goes under its details: each finding’s by its rule, then the queue’s by its status', () => {
-  const h264 = { rule: 'VIDEO_NOT_HEVC' as const, text: 'x', measured: 'H.264', limit: 'HEVC', detail: ' avc1.640028 ' };
-  const failed = { rule: 'PACKAGING_FAILED' as const, text: 'The transcoder failed.', measured: null, limit: null, detail: 'ffmpeg exited 1' };
-  assert.deepEqual(rowDetails(row({ findings: [h264] })), ['video not HEVC: avc1.640028']);
-  assert.deepEqual(rowDetails(row({ findings: [...breaking('OVER_SIZE_CAP'), h264], queue: 'failed', queueDetail: 'ffmpeg exited 1' })), [
-    'video not HEVC: avc1.640028',
-    'status: ffmpeg exited 1',
+test('a row’s details: each finding’s words and technical part by its tag, why it is blocked, the queue’s part, the original’s audio', () => {
+  const h264 = { rule: 'VIDEO_NOT_HEVC' as const, text: 'The video is H.264, and the transcoder makes every video HEVC.', measured: 'H.264', limit: 'HEVC', detail: ' avc1.640028 ' };
+  const size = { rule: 'OVER_SIZE_CAP' as const, text: 'The original is larger than the 16.1 GB the transcoder allows for a movie.', measured: null, limit: '16.1 GB', detail: null };
+  assert.deepEqual(rowDetails(row({ findings: [h264, size], queue: 'failed', queueDetail: 'ffmpeg exited 1' })), [
+    { label: `copy > 15${NB}GiB`, text: 'The original is larger than the 16.1 GB the transcoder allows for a movie.', detail: null },
+    { label: 'not HEVC', text: 'The video is H.264, and the transcoder makes every video HEVC.', detail: 'avc1.640028' },
+    { label: 'status', text: '', detail: 'ffmpeg exited 1' },
+    { label: 'original audio', text: '7.1 TrueHD', detail: null },
   ]);
-  assert.deepEqual(rowDetails(row({ findings: [failed] })), ['packaging failed: ffmpeg exited 1']);
-  // nothing technical, or a blank detail: no details at all
-  assert.deepEqual(rowDetails(row({ findings: breaking('NO_SURROUND') })), []);
-  assert.deepEqual(rowDetails(row({ findings: [{ ...h264, detail: '  ' }] })), []);
-  // the queue's detail explains a status the row shows; a title done shows none
-  assert.deepEqual(rowDetails(row({ findings: breaking('NO_SURROUND'), queue: 'done', queueDetail: 'ffmpeg exited 1' })), []);
+  // processing again can't help: why, by "blocked"
+  assert.deepEqual(rowDetails(row({ findings: breaking('PACKAGING_FAILED'), reworkBlocked: 'its file is a disc image', originalAudio: null })), [
+    { label: 'failed', text: 'x', detail: null },
+    { label: 'blocked', text: 'its file is a disc image', detail: null },
+  ]);
+  // the queue's part explains a status the row shows; a title done shows none
+  assert.deepEqual(rowDetails(row({ findings: [], queue: 'done', queueDetail: 'ffmpeg exited 1', originalAudio: ' ' })), []);
 });
 
-test('what processing again does to a title, from the rules it breaks', () => {
-  const capsChecked = true;
-  assert.equal(outcomeText(row({ findings: breaking('OVER_BITRATE_CAP') }), capsChecked), 'Re-encoded, then packaged again');
-  assert.equal(outcomeText(row({ findings: breaking('OVER_SIZE_CAP') }), capsChecked), 'Re-encoded, then packaged again');
-  assert.equal(outcomeText(row({ findings: breaking('VIDEO_NOT_HEVC') }), capsChecked), 'Re-encoded, then packaged again');
-  // within the caps: the video is copied
-  assert.equal(outcomeText(row({ findings: breaking('NO_SURROUND') }), capsChecked), 'Packaged again; the video is copied');
-  assert.equal(outcomeText(row({ findings: breaking('IMAGE_SUBTITLES_MISSING') }), capsChecked), 'Packaged again; the video is copied');
-  // a cap rule with them: re-encoded
-  assert.equal(outcomeText(row({ findings: breaking('NO_SURROUND', 'OVER_SIZE_CAP') }), capsChecked), 'Re-encoded, then packaged again');
-  // caps not checked: the video's fate isn't known, so not said
-  assert.equal(outcomeText(row({ findings: breaking('NO_SURROUND') }), false), 'Packaged again');
-  assert.equal(outcomeText(row({ findings: breaking('NOT_PACKAGED'), packageBytes: null }), capsChecked), 'Packaged for the first time');
-  // never packaged comes first, a cap rule or not
-  assert.equal(outcomeText(row({ findings: breaking('NOT_PACKAGED', 'OVER_BITRATE_CAP'), packageBytes: null }), capsChecked), 'Packaged for the first time');
-  // packaging failed: packaged again when there is a package, else for the first time
-  assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED') }), capsChecked), 'Packaged again; the video is copied');
-  assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED') }), false), 'Packaged again');
-  assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED'), packageBytes: null }), capsChecked), 'Packaged for the first time');
-  assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED', 'VIDEO_NOT_HEVC') }), capsChecked), 'Re-encoded, then packaged again');
-  assert.equal(outcomeText(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null, detail: null }] }), capsChecked), '');
+test('what processing again does, as a tag: katalog-manager’s outcome, "blocked" for a title it can’t help, else from the rules', () => {
+  assert.equal(outcomeTag(row({ outcome: 'REENCODE' })), 're-encode');
+  assert.equal(outcomeTag(row({ outcome: 'REPACKAGE' })), 'repackage');
+  assert.equal(outcomeTag(row({ outcome: 'FIRST_PACKAGE' })), 'first package');
+  assert.equal(outcomeTag(row({ outcome: 'BLOCKED' })), 'blocked');
+  // the server's reason blocks whatever its outcome says
+  assert.equal(outcomeTag(row({ outcome: 'REENCODE', reworkBlocked: 'its original was deleted after packaging' })), 'blocked');
+  // no outcome told: from the rules the title breaks
+  assert.equal(outcomeTag(row({ findings: breaking('OVER_BITRATE_CAP') })), 're-encode');
+  assert.equal(outcomeTag(row({ findings: breaking('NO_SURROUND', 'OVER_SIZE_CAP') })), 're-encode');
+  assert.equal(outcomeTag(row({ findings: breaking('NO_SURROUND') })), 'repackage');
+  assert.equal(outcomeTag(row({ findings: breaking('IMAGE_SUBTITLES_MISSING') })), 'repackage');
+  assert.equal(outcomeTag(row({ findings: breaking('NOT_PACKAGED', 'OVER_BITRATE_CAP'), packageBytes: null })), 'first package');
+  assert.equal(outcomeTag(row({ findings: breaking('PACKAGING_FAILED') })), 'repackage');
+  assert.equal(outcomeTag(row({ findings: breaking('PACKAGING_FAILED'), packageBytes: null })), 'first package');
+  assert.equal(outcomeTag(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null, detail: null }] })), '');
 });
 
-test('the outcome line joins the estimate to what processing again does', () => {
-  assert.equal(outcomeLine(row({ findings: breaking('OVER_SIZE_CAP'), estimatedBytes: 11.8 * GB }), true), `Re-encoded, then packaged again, at most 11.8${NB}GB`);
-  assert.equal(outcomeLine(row({ findings: breaking('NO_SURROUND'), estimatedBytes: null }), true), 'Packaged again; the video is copied');
-  assert.equal(outcomeLine(row({ findings: breaking('NOT_PACKAGED'), packageBytes: null, estimatedBytes: 14.1 * GB }), true), `Packaged for the first time, at most 14.1${NB}GB`);
-  // a rule the console doesn't know, with an estimate
-  assert.equal(outcomeLine(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null, detail: null }] }), true), `At most 12${NB}GB`);
-});
-
-test('a title processing again can’t help is promised nothing: why, and no estimate', () => {
-  const disc = row({ findings: breaking('PACKAGING_FAILED'), packageBytes: null, estimatedBytes: 11.3 * GB, reworkBlocked: 'its file is a disc image' });
-  assert.equal(outcomeLine(disc, true), 'Can’t be processed again: its file is a disc image.');
-  assert.equal(
-    outcomeLine(row({ findings: breaking('OVER_BITRATE_CAP', 'OVER_SIZE_CAP'), reworkBlocked: 'its original was deleted after packaging' }), true),
-    'Can’t be processed again: its original was deleted after packaging.',
-  );
-  // a clause sent with a full stop, or with spaces, reads the same; a blank one blocks nothing
-  assert.equal(outcomeLine({ ...disc, reworkBlocked: ' its file is a disc image. ' }, false), 'Can’t be processed again: its file is a disc image.');
-  assert.equal(outcomeLine({ ...disc, reworkBlocked: '  ' }, true), `Packaged for the first time, at most 11.3${NB}GB`);
-  assert.equal(blockedReason(disc), 'its file is a disc image');
+test('a title processing again can’t help: the server’s clause, with a full stop or spaces the same, or its outcome', () => {
+  assert.equal(blockedReason(row({ reworkBlocked: ' its file is a disc image. ' })), 'its file is a disc image');
+  assert.equal(blockedReason(row({ reworkBlocked: '  ' })), null);
   assert.equal(blockedReason(row({})), null);
+  assert.equal(isBlocked(row({ reworkBlocked: 'it has no file' })), true);
+  assert.equal(isBlocked(row({ outcome: 'BLOCKED' })), true);
+  assert.equal(isBlocked(row({ reworkBlocked: ' ', outcome: 'REENCODE' })), false);
 });
 
 test('a title can be ticked and processed again when the queue doesn’t hold it and processing again can help', () => {
@@ -253,6 +278,7 @@ test('a title can be ticked and processed again when the queue doesn’t hold it
   assert.equal(canProcess(row({ queue: 'sent' })), false);
   assert.equal(canProcess(row({ reworkBlocked: 'its file is a disc image' })), false);
   assert.equal(canProcess(row({ queue: 'failed', reworkBlocked: 'its original was deleted after packaging' })), false);
+  assert.equal(canProcess(row({ outcome: 'BLOCKED' })), false);
 });
 
 test('a row’s checkbox and button are named by what they do, and a title processing again can’t help says why', () => {
@@ -261,6 +287,8 @@ test('a row’s checkbox and button are named by what they do, and a title proce
     select: 'select Vellmar Station (2019). Can’t be processed again: its video is Dolby Vision profile 7, which needs a tone-mapping encode.',
     process: 'process again: Vellmar Station (2019). Can’t be processed again: its video is Dolby Vision profile 7, which needs a tone-mapping encode.',
   });
+  // blocked with no reason told
+  assert.equal(rowControlNames(row({ outcome: 'BLOCKED' })).select, 'select Vellmar Station (2019). Can’t be processed again.');
 });
 
 test('a row’s status in the status vocabulary’s words, the queue’s reason as katalog-manager says it; a title done has none', () => {
@@ -519,6 +547,42 @@ test('a server that counts titles skipped without saying it gets a sentence from
 });
 
 // ---- sizes
+
+test('a header sorts its column the way it goes at first, and pressed again the other way', () => {
+  assert.deepEqual(DEFAULT_ORDER, { sort: 'PACKAGE_SIZE', descending: true });
+  assert.deepEqual(nextOrder(DEFAULT_ORDER, 'PACKAGE_SIZE'), { sort: 'PACKAGE_SIZE', descending: false });
+  assert.deepEqual(nextOrder(DEFAULT_ORDER, 'SAVING'), { sort: 'SAVING', descending: true });
+  assert.deepEqual(nextOrder(DEFAULT_ORDER, 'VIDEO_BITRATE'), { sort: 'VIDEO_BITRATE', descending: true });
+  // titles from A
+  assert.deepEqual(nextOrder(DEFAULT_ORDER, 'TITLE'), { sort: 'TITLE', descending: false });
+  assert.deepEqual(nextOrder({ sort: 'TITLE', descending: false }, 'TITLE'), { sort: 'TITLE', descending: true });
+  assert.equal(ariaSort(DEFAULT_ORDER, 'PACKAGE_SIZE'), 'descending');
+  assert.equal(ariaSort({ sort: 'TITLE', descending: false }, 'TITLE'), 'ascending');
+  assert.equal(ariaSort(DEFAULT_ORDER, 'TITLE'), 'none');
+});
+
+test('the CSV asks for the filter and the order the table shows, and is named by the kind and the check’s time', () => {
+  assert.equal(csvQuery(DEFAULT_FILTER, DEFAULT_ORDER), 'kind=MOVIE&sort=PACKAGE_SIZE&descending=true');
+  assert.equal(
+    csvQuery({ kind: '', rules: ['NO_SURROUND', 'OVER_SIZE_CAP'], search: ' pine ' }, { sort: 'TITLE', descending: false }),
+    'rules=OVER_SIZE_CAP%2CNO_SURROUND&search=pine&sort=TITLE&descending=false',
+  );
+  assert.equal(csvUrl(DEFAULT_FILTER, DEFAULT_ORDER), '/api/manage/compliance.csv?kind=MOVIE&sort=PACKAGE_SIZE&descending=true');
+  // in the browser's time, as the page shows it
+  const at = new Date(2026, 9, 26, 13, 43, 9);
+  assert.equal(csvFileName('MOVIE', at.toISOString()), 'rules-movies-2026-10-26T1343.csv');
+  assert.equal(csvFileName('EPISODE', at.toISOString()), 'rules-episodes-2026-10-26T1343.csv');
+  assert.equal(csvFileName('', at.toISOString()), 'rules-all-2026-10-26T1343.csv');
+  // never checked: the time of the download
+  assert.equal(csvFileName('MOVIE', null, new Date(2026, 0, 2, 3, 4)), 'rules-movies-2026-01-02T0304.csv');
+});
+
+test('the check’s line counts the titles it checked and those that break a rule, as far as they are known', () => {
+  assert.deepEqual(checkCounts(2409, 279), ['2,409 titles checked', '279 break a rule']);
+  assert.deepEqual(checkCounts(1, 1), ['1 title checked', '1 breaks a rule']);
+  assert.deepEqual(checkCounts(null, 279), ['279 break a rule']);
+  assert.deepEqual(checkCounts(undefined, undefined), []);
+});
 
 test('sizes as chino’s downloads write them: decimal, GB with one decimal and no trailing zero, MB below 1 GB', () => {
   assert.equal(fmtBytes(1.4 * GB), `1.4${NB}GB`);
