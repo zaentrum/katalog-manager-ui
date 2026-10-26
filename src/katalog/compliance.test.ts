@@ -8,6 +8,8 @@ import {
   RULE_ORDER,
   announceText,
   appendRows,
+  blockedReason,
+  canProcess,
   checkState,
   confirmBody,
   confirmFacts,
@@ -38,6 +40,7 @@ import {
   processLabel,
   queueParts,
   queuedToasts,
+  rowControlNames,
   rowDetails,
   rowStatus,
   rowTitle,
@@ -77,6 +80,7 @@ const row = (r: Partial<ComplianceRow>): ComplianceRow => ({
   queue: null,
   queueReason: null,
   queueDetail: null,
+  reworkBlocked: null,
   evaluatedAt: '2026-10-26T08:00:00Z',
   ...r,
 });
@@ -227,6 +231,38 @@ test('the outcome line joins the estimate to what processing again does', () => 
   assert.equal(outcomeLine(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null, detail: null }] }), true), `At most 12${NB}GB`);
 });
 
+test('a title processing again can’t help is promised nothing: why, and no estimate', () => {
+  const disc = row({ findings: breaking('PACKAGING_FAILED'), packageBytes: null, estimatedBytes: 11.3 * GB, reworkBlocked: 'its file is a disc image' });
+  assert.equal(outcomeLine(disc, true), 'Can’t be processed again: its file is a disc image.');
+  assert.equal(
+    outcomeLine(row({ findings: breaking('OVER_BITRATE_CAP', 'OVER_SIZE_CAP'), reworkBlocked: 'its original was deleted after packaging' }), true),
+    'Can’t be processed again: its original was deleted after packaging.',
+  );
+  // a clause sent with a full stop, or with spaces, reads the same; a blank one blocks nothing
+  assert.equal(outcomeLine({ ...disc, reworkBlocked: ' its file is a disc image. ' }, false), 'Can’t be processed again: its file is a disc image.');
+  assert.equal(outcomeLine({ ...disc, reworkBlocked: '  ' }, true), `Packaged for the first time, at most 11.3${NB}GB`);
+  assert.equal(blockedReason(disc), 'its file is a disc image');
+  assert.equal(blockedReason(row({})), null);
+});
+
+test('a title can be ticked and processed again when the queue doesn’t hold it and processing again can help', () => {
+  assert.equal(canProcess(row({})), true);
+  assert.equal(canProcess(row({ queue: 'done' })), true);
+  assert.equal(canProcess(row({ queue: 'failed' })), true);
+  assert.equal(canProcess(row({ queue: 'queued' })), false);
+  assert.equal(canProcess(row({ queue: 'sent' })), false);
+  assert.equal(canProcess(row({ reworkBlocked: 'its file is a disc image' })), false);
+  assert.equal(canProcess(row({ queue: 'failed', reworkBlocked: 'its original was deleted after packaging' })), false);
+});
+
+test('a row’s checkbox and button are named by what they do, and a title processing again can’t help says why', () => {
+  assert.deepEqual(rowControlNames(row({})), { select: 'select Vellmar Station (2019)', process: 'process again: Vellmar Station (2019)' });
+  assert.deepEqual(rowControlNames(row({ reworkBlocked: 'its video is Dolby Vision profile 7, which needs a tone-mapping encode' })), {
+    select: 'select Vellmar Station (2019). Can’t be processed again: its video is Dolby Vision profile 7, which needs a tone-mapping encode.',
+    process: 'process again: Vellmar Station (2019). Can’t be processed again: its video is Dolby Vision profile 7, which needs a tone-mapping encode.',
+  });
+});
+
 test('a row’s status in the status vocabulary’s words, the queue’s reason as katalog-manager says it; a title done has none', () => {
   assert.deepEqual(rowStatus('queued'), { word: 'queued', tone: 'blue', detail: null });
   assert.deepEqual(rowStatus('sent'), { word: 'processing', tone: 'blue', detail: null });
@@ -325,6 +361,32 @@ test('rows read again: a ticked row is kept as it is now, and drops out once the
   assert.equal(next.mode === 'rows' && next.rows[0], aNow);
   // nothing new: the same selection
   assert.equal(select(next, { type: 'loaded', rows: [aNow] }), next);
+  // processing it again can't help any more: it drops out too
+  assert.deepEqual(ids(select(next, { type: 'loaded', rows: [row({ itemId: 'c', reworkBlocked: 'it has no file' })] })), ['a']);
+});
+
+test('every way of selecting leaves out a title processing again can’t help, and counts without it', () => {
+  const disc = row({ itemId: 'x', reworkBlocked: 'its file is a disc image' });
+  const shown = [a, disc, b, q];
+  // one at a time: it can't be ticked
+  assert.equal(select(NO_SELECTION, { type: 'row', row: disc, on: true, loaded: shown }), NO_SELECTION);
+  // the header checkbox ticks the others, and shows a tick once they are all ticked
+  const s = run({ type: 'page', on: true, rows: shown });
+  assert.deepEqual(ids(s), ['a', 'b']);
+  assert.equal(selectionText(selectedCount(s, 250), hiddenCount(s, shown)), '2 selected');
+  assert.equal(pageState(s, shown), 'all');
+  assert.equal(isSelected(s, disc), false);
+  // select all is offered while the queue would take more than the 2 on screen (queueable leaves it out)
+  assert.equal(offersMatching(s, shown, 2), false);
+  assert.equal(offersMatching(s, shown, 248), true);
+  // every match ticked: it stays unticked, and the count is queueable's
+  const all = select(s, { type: 'matching', key: filterKey(DEFAULT_FILTER) });
+  assert.equal(isSelected(all, disc), false);
+  assert.equal(selectedCount(all, 248), 248);
+  // unticking a row of every match keeps the others that can be ticked, and not it
+  assert.deepEqual(ids(select(all, { type: 'row', row: a, on: false, loaded: shown })), ['b']);
+  // nothing on screen can be ticked: the header checkbox has nothing to tick
+  assert.equal(pageState(NO_SELECTION, [disc, q]), 'none');
 });
 
 test('the count is read out after each change, and the clear is said', () => {

@@ -61,6 +61,7 @@ export interface ComplianceRow {
   queue: string | null; // queued | sent | done | failed: where the title stands in the re-encode queue
   queueReason: string | null; // why it waits or failed there, in a sentence
   queueDetail: string | null; // the technical part of that ("ffmpeg exited 1")
+  reworkBlocked: string | null; // why processing it again can't help, a clause ("its file is a disc image"); null when it can
   evaluatedAt: string;
 }
 export interface ComplianceSummary {
@@ -89,7 +90,7 @@ export interface ComplianceReport {
   evaluatedAt: string | null; // the oldest evaluation in the report; null when never evaluated
   evaluating: boolean;
   matching: ComplianceTotals;
-  queueable: ComplianceTotals; // of those matching, the titles the queue doesn't hold
+  queueable: ComplianceTotals; // of those matching, the titles the queue would take: none it holds, none processing again can't help
   queue: ComplianceQueueCounts;
   summary: ComplianceSummary[];
   rows: ComplianceRow[]; // the titles that break a rule, biggest package (then original) first
@@ -289,8 +290,15 @@ export function outcomeText(r: Pick<ComplianceRow, 'findings' | 'packageBytes'>,
 
 /** The outcome line under a row's findings: what processing it again does,
  *  with its package at most after when there is an estimate: "Re-encoded,
- *  then packaged again, at most 11.8 GB". */
-export function outcomeLine(r: Pick<ComplianceRow, 'findings' | 'packageBytes' | 'estimatedBytes'>, capsChecked: boolean): string {
+ *  then packaged again, at most 11.8 GB". A title processing again can't
+ *  help is promised nothing: why, as katalog-manager says it, "Can’t be
+ *  processed again: its file is a disc image.", and no estimate. */
+export function outcomeLine(
+  r: Pick<ComplianceRow, 'findings' | 'packageBytes' | 'estimatedBytes' | 'reworkBlocked'>,
+  capsChecked: boolean,
+): string {
+  const blocked = blockedReason(r);
+  if (blocked) return `Can’t be processed again: ${blocked}.`;
   const outcome = outcomeText(r, capsChecked);
   const after = r.estimatedBytes != null && r.estimatedBytes > 0 ? `at most ${fmtBytes(r.estimatedBytes)}` : '';
   if (!after) return outcome;
@@ -309,6 +317,29 @@ export function appendRows(rows: readonly ComplianceRow[], more: readonly Compli
  *  ticked or processed again. One done or failed can. */
 export function inQueue(queue: string | null | undefined): boolean {
   return queue === 'queued' || queue === 'sent';
+}
+
+/** Why processing a title again can't help, as katalog-manager says it, a
+ *  clause ("its file is a disc image"); null when it can. */
+export function blockedReason(r: Pick<ComplianceRow, 'reworkBlocked'>): string | null {
+  return r.reworkBlocked?.trim().replace(/\.$/, '') || null;
+}
+
+/** True for a title that can be ticked and processed again: the queue
+ *  doesn't hold it, and processing it again can help. */
+export function canProcess(r: Pick<ComplianceRow, 'queue' | 'reworkBlocked'>): boolean {
+  return !inQueue(r.queue) && !blockedReason(r);
+}
+
+/** The names of a row's checkbox and of its button: what each does, and,
+ *  for a title processing again can't help, why they are off. */
+export function rowControlNames(
+  r: Pick<ComplianceRow, 'title' | 'year' | 'kind' | 'seriesTitle' | 'season' | 'episode' | 'reworkBlocked'>,
+): { select: string; process: string } {
+  const title = rowTitle(r);
+  const blocked = blockedReason(r);
+  const why = blocked ? `. Can’t be processed again: ${blocked}.` : '';
+  return { select: `select ${title}${why}`, process: `process again: ${title}${why}` };
 }
 
 /** A row's status, in the status vocabulary's words: queued, processing,
@@ -374,10 +405,13 @@ export type SelectionAction =
   | { type: 'filter'; key: string }
   | { type: 'loaded'; rows: readonly ComplianceRow[] };
 
-const pickable = (r: ComplianceRow) => !inQueue(r.queue);
+// a row that can be ticked: one the queue doesn't hold, that processing
+// again can help
+const pickable = canProcess;
 
 /** The selection after a:
- *  - a row ticked or not (one the queue holds can't be);
+ *  - a row ticked or not (one the queue holds, or that processing again
+ *    can't help, can't be);
  *  - the header checkbox: every row shown that can be ticked, or, pressed
  *    while it shows a tick, none;
  *  - every title that matches the filter;
@@ -385,7 +419,7 @@ const pickable = (r: ComplianceRow) => !inQueue(r.queue);
  *  - a change of the filter: ticked rows stay ticked, hidden or not, and
  *    every match of another filter is no selection any more;
  *  - rows read again: a ticked row is kept as it is now, and drops out once
- *    the queue holds it.
+ *    the queue holds it or processing it again can't help.
  *  A row unticked while every match is ticked leaves the other rows shown. */
 export function select(s: Selection, a: SelectionAction): Selection {
   switch (a.type) {
@@ -430,7 +464,8 @@ export function isSelected(s: Selection, row: ComplianceRow): boolean {
 }
 
 /** How many titles are ticked: every match counts all that match and that
- *  the queue doesn't hold already (queueable). */
+ *  the queue would take (queueable: none it holds already, none processing
+ *  again can't help). */
 export function selectedCount(s: Selection, queueable: number): number {
   return s.mode === 'matching' ? queueable : s.rows.length;
 }
@@ -454,7 +489,7 @@ export function pageState(s: Selection, loaded: readonly ComplianceRow[]): 'none
 
 /** True right after the header checkbox has ticked every row shown that
  *  can be ticked, while more titles could be queued than that: then
- *  "select all N matching" is offered, N the titles the queue doesn't hold
+ *  "select all N matching" is offered, N the titles the queue would take
  *  (queueable). */
 export function offersMatching(s: Selection, loaded: readonly ComplianceRow[], queueable: number): boolean {
   return s.mode === 'rows' && pageState(s, loaded) === 'all' && queueable > loaded.filter(pickable).length;

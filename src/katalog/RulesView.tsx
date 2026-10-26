@@ -15,6 +15,7 @@ import {
   RULE_ORDER,
   announceText,
   appendRows,
+  canProcess,
   checkState,
   confirmBody,
   confirmFacts,
@@ -25,7 +26,6 @@ import {
   findingText,
   fmtCount,
   hiddenCount,
-  inQueue,
   inRuleOrder,
   isFiltering,
   isOnlyRule,
@@ -41,6 +41,7 @@ import {
   processLabel,
   queueParts,
   queuedToasts,
+  rowControlNames,
   rowDetails,
   rowStatus,
   rowTitle,
@@ -83,7 +84,7 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     rows {
       itemId title year kind seriesId seriesTitle season episode
       findings { rule text measured limit detail }
-      originalBytes packageBytes estimatedBytes queue queueReason queueDetail evaluatedAt
+      originalBytes packageBytes estimatedBytes queue queueReason queueDetail reworkBlocked evaluatedAt
     }
     nextCursor
   }
@@ -385,7 +386,7 @@ export function RulesView() {
   const count = selectedCount(sel, queueable);
   const hidden = hiddenCount(sel, rows);
   const headBox = pageState(sel, rows);
-  const pickable = rows.filter((r) => !inQueue(r.queue));
+  const pickable = rows.filter(canProcess);
   const empty = emptyState(report, filter);
   const capsChecked = report.rules.transcoder != null;
 
@@ -412,11 +413,13 @@ export function RulesView() {
         />
       ),
       width: 28,
+      // a title the queue holds, or that processing again can't help, can't
+      // be ticked: its name says why
       render: (r) => (
         <Checkbox
-          aria-label={`select ${rowTitle(r)}`}
+          aria-label={rowControlNames(r).select}
           checked={isSelected(sel, r)}
-          disabled={inQueue(r.queue)}
+          disabled={!canProcess(r)}
           onChange={(e) => dispatch({ type: 'row', row: r, on: e.target.checked, loaded: rows })}
         />
       ),
@@ -485,8 +488,8 @@ export function RulesView() {
           variant="ghost"
           size="sm"
           leading={<FileVideo size={13} />}
-          disabled={inQueue(r.queue)}
-          aria-label={`process again: ${rowTitle(r)}`}
+          disabled={!canProcess(r)}
+          aria-label={rowControlNames(r).process}
           onClick={() => open({ scope: rowsScope([r]), items: [r.itemId], matching: null, bulk: false })}
         >
           process again
