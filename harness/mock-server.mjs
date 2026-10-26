@@ -437,23 +437,27 @@ function compliance(vars, scenario) {
   for (const rule of ['NOT_PACKAGED', 'PACKAGING_FAILED', 'OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING', 'VIDEO_NOT_HEVC']) {
     const of = titles.filter((r) => r.findings.some((f) => f.rule === rule));
     if (!of.length) continue;
+    // now and after over the same titles, those with an estimate
     const estimated = of.filter((r) => r.estimatedBytes != null);
     summary.push({
       rule,
       titles: of.length,
-      packageBytes: of.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
+      packageBytes: estimated.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
       estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
+      withoutEstimate: of.length - estimated.length,
     });
   }
   const matching = sorted(matchingOf(titles, vars), vars.sort, vars.descending);
   const offset = vars.after ? Number(String(vars.after).replace(/^o:/, '')) || 0 : 0;
   const first = Math.min(Math.max(vars.first ?? 100, 1), 500);
+  // the originals of every title; the packages now and after over the same
+  // titles, those with an estimate
   const totals = (rows) => {
     const estimated = rows.filter((r) => r.estimatedBytes != null);
     return {
       titles: rows.length,
       originalBytes: rows.reduce((s, r) => s + r.originalBytes, 0),
-      packageBytes: rows.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
+      packageBytes: estimated.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
       estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
       withoutEstimate: rows.length - estimated.length,
       fingerprint: fingerprintOf(rows),
