@@ -9,7 +9,6 @@ import { fmtTime } from './status';
 import { catalogItemHref } from './processing';
 import {
   CLEARED_FILTER,
-  CONFIRM_BODY,
   DEFAULT_FILTER,
   KIND_OPTIONS,
   NO_SELECTION,
@@ -17,6 +16,7 @@ import {
   announceText,
   appendRows,
   checkState,
+  confirmBody,
   confirmFacts,
   countText,
   emptyState,
@@ -33,13 +33,12 @@ import {
   loadFailure,
   matchingScope,
   offersMatching,
-  outcomeText,
+  outcomeLine,
   pageState,
   pickRule,
   pollMs,
   processLabel,
   queueParts,
-  queuedAny,
   queuedToasts,
   rowStatus,
   rowTitle,
@@ -49,8 +48,8 @@ import {
   select,
   selectedCount,
   selectionText,
-  sizeChange,
   sizeText,
+  skipBanner,
   staleText,
   titlesOf,
   withRule,
@@ -77,12 +76,13 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     }
     notEvaluated evaluatedAt evaluating
     matching { titles originalBytes packageBytes estimatedBytes }
+    queueable { titles originalBytes packageBytes estimatedBytes }
     queue { queued processing processed failed }
     summary { rule titles packageBytes estimatedBytes }
     rows {
       itemId title year kind seriesId seriesTitle season episode
       findings { rule text measured limit }
-      originalBytes packageBytes estimatedBytes queue evaluatedAt
+      originalBytes packageBytes estimatedBytes queue queueReason evaluatedAt
     }
     nextCursor
   }
@@ -90,9 +90,10 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
 // Every title that breaks a rule, whatever the filter: the filter bar's
 // "230 of 279".
 const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { matching { titles } } }`;
-const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { queued alreadyQueued skipped message } }`;
+const QUEUED = `queued alreadyQueued skipped skippedTitles { itemId title reason } message`;
+const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { ${QUEUED} } }`;
 const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String) {
-  queueReworkMatching(kind: $kind, rules: $rules, search: $search) { queued alreadyQueued skipped message }
+  queueReworkMatching(kind: $kind, rules: $rules, search: $search) { ${QUEUED} }
 }`;
 const CHECK = `mutation($kind: ComplianceKind) { refreshCompliance(kind: $kind) }`;
 
@@ -295,11 +296,9 @@ export function RulesView() {
   const queued = useCallback(
     (r: ComplianceQueued, p: Processing) => {
       setProcessing(null);
-      if (!queuedAny(r)) {
-        setProblem({ state: 'error', text: "Couldn't queue the titles.", detail: r.message, retry: false });
-        return;
-      }
-      setProblem(null);
+      // titles the queue didn't take are a failure: a warning banner
+      const skips = skipBanner(r);
+      setProblem(skips ? { state: 'warning', text: skips.text, detail: skips.detail, retry: false } : null);
       for (const t of queuedToasts(r)) pushToast(t);
       if (p.bulk) dispatch({ type: 'clear' });
       // the button that opened the dialog goes with the selection, or turns
@@ -313,7 +312,7 @@ export function RulesView() {
   );
   const failed = useCallback((e: unknown) => {
     setProcessing(null);
-    setProblem({ state: 'error', text: "Couldn't queue the titles.", detail: loadFailure(e).detail, retry: false });
+    setProblem({ state: 'error', text: 'Couldn’t queue the titles.', detail: loadFailure(e).detail, retry: false });
   }, []);
 
   async function checkAgain() {
@@ -322,7 +321,7 @@ export function RulesView() {
     try {
       await gql<{ refreshCompliance: boolean }>(CHECK, { kind: filter.kind || null });
     } catch (e) {
-      setProblem({ state: 'error', text: "Couldn't start a check.", detail: loadFailure(e).detail, retry: false });
+      setProblem({ state: 'error', text: 'Couldn’t start a check.', detail: loadFailure(e).detail, retry: false });
     } finally {
       setChecking(false);
       refresh();
@@ -379,7 +378,9 @@ export function RulesView() {
   }
 
   const matching = report.matching.titles;
-  const count = selectedCount(sel, matching);
+  // what "select all" ticks and queues: the matches the queue doesn't hold
+  const queueable = report.queueable.titles;
+  const count = selectedCount(sel, queueable);
   const hidden = hiddenCount(sel, rows);
   const headBox = pageState(sel, rows);
   const pickable = rows.filter((r) => !inQueue(r.queue));
@@ -390,7 +391,7 @@ export function RulesView() {
   function processSelection() {
     if (!report) return;
     if (sel.mode === 'matching') {
-      open({ scope: matchingScope(report.matching), items: [], matching: filter, bulk: true });
+      open({ scope: matchingScope(report.queueable), items: [], matching: filter, bulk: true });
       return;
     }
     open({ scope: rowsScope(sel.rows), items: sel.rows.map((r) => r.itemId), matching: null, bulk: true });
@@ -431,7 +432,7 @@ export function RulesView() {
       key: 'findings',
       header: 'findings',
       render: (r) => {
-        const outcome = outcomeText(r, capsChecked);
+        const outcome = outcomeLine(r, capsChecked);
         return (
           <div className="kat__findings">
             <ul>
@@ -439,12 +440,7 @@ export function RulesView() {
                 <li key={`${f.rule}/${i}`}>{findingText(f)}</li>
               ))}
             </ul>
-            {outcome && (
-              <span className="kat__outcome">
-                <span aria-hidden>→ </span>
-                {outcome}
-              </span>
-            )}
+            {outcome && <span className="kat__outcome">{outcome}</span>}
           </div>
         );
       },
@@ -454,20 +450,24 @@ export function RulesView() {
       key: 'packageBytes',
       header: 'package',
       align: 'right',
-      render: (r) => <span className="kat__nowrap">{sizeChange(r.packageBytes, r.estimatedBytes)}</span>,
+      render: (r) => <span className="kat__nowrap">{sizeText(r.packageBytes)}</span>,
     },
     {
       key: 'queue',
       header: 'status',
       render: (r) => {
-        const s = rowStatus(r.queue);
+        const s = rowStatus(r.queue, r.queueReason);
         if (!s) return null;
         return (
           <div className="kat__status">
             <Badge tone={s.tone} dot>
               {s.word}
             </Badge>
-            {s.detail && <span className="kat__status-detail">{s.detail}</span>}
+            {s.detail && (
+              <span className="kat__status-detail" title={s.detail}>
+                {s.detail}
+              </span>
+            )}
           </div>
         );
       },
@@ -531,7 +531,9 @@ export function RulesView() {
       {report.summary.length > 0 && (
         <div className="kat__summary">
           <h3 className="kat__h3">by rule</h3>
-          <SummaryTable summary={report.summary} rules={rules} onPick={(rule) => setRules(pickRule(rules, rule))} />
+          <ScrollEdges>
+            <SummaryTable summary={report.summary} rules={rules} onPick={(rule) => setRules(pickRule(rules, rule))} />
+          </ScrollEdges>
           {parts.length > 0 && (
             <p className="kat__queue">
               <span className="kat__queue-label">queue</span>
@@ -562,13 +564,15 @@ export function RulesView() {
             <Select value={kind} onChange={(e) => setKind(e.target.value as ComplianceKind | '')} options={KIND_OPTIONS} />
           </Field>
           <div className="kat__spacer" />
-          {loading === 'first' && <Spinner size={14} label="loading titles" />}
-          <span className="kat__count" aria-live="polite" aria-atomic="true">
-            {countText(matching, all.data?.libraryCompliance.matching.titles)}
-          </span>
-          <Button variant="ghost" size="sm" disabled={!isFiltering({ kind, rules, search: typed })} onClick={clearAll}>
-            clear all
-          </Button>
+          <div className="kat__filter-end">
+            {loading === 'first' && <Spinner size={14} label="loading titles" />}
+            <span className="kat__count" aria-live="polite" aria-atomic="true">
+              {countText(matching, all.data?.libraryCompliance.matching.titles)}
+            </span>
+            <Button variant="ghost" size="sm" disabled={!isFiltering({ kind, rules, search: typed })} onClick={clearAll}>
+              clear all
+            </Button>
+          </div>
         </div>
         <fieldset className="kat__rulepick">
           <legend>rules</legend>
@@ -614,7 +618,7 @@ export function RulesView() {
             heading={titlesOf(kind, matching)}
             count={count}
             text={selectionText(count, hidden)}
-            offer={offersMatching(sel, rows, matching) ? `select all ${fmtCount(matching)} matching` : null}
+            offer={offersMatching(sel, rows, queueable) ? `select all ${fmtCount(queueable)} matching` : null}
             action={processLabel(count)}
             onClear={() => {
               dispatch({ type: 'clear' });
@@ -626,7 +630,9 @@ export function RulesView() {
             }}
             onAction={processSelection}
           />
-          <Table columns={cols} rows={rows} rowKey={(r) => r.itemId} dense aria-label="titles" />
+          <ScrollEdges>
+            <Table columns={cols} rows={rows} rowKey={(r) => r.itemId} dense aria-label="titles" />
+          </ScrollEdges>
         </>
       )}
       {rows.length > 0 && rows.length < matching && (
@@ -720,11 +726,12 @@ function SummaryTable({
       ),
     },
     { key: 'titles', header: 'titles', align: 'right', render: (s) => (s.titles ? fmtCount(s.titles) : <span className="kat__muted">0</span>) },
+    { key: 'packageBytes', header: 'now', align: 'right', render: (s) => <span className="kat__nowrap">{sizeText(s.packageBytes)}</span> },
     {
-      key: 'packageBytes',
-      header: 'packages',
+      key: 'estimatedBytes',
+      header: 'at most after',
       align: 'right',
-      render: (s) => <span className="kat__nowrap">{sizeChange(s.packageBytes, s.estimatedBytes)}</span>,
+      render: (s) => <span className="kat__nowrap">{sizeText(s.estimatedBytes)}</span>,
     },
   ];
   return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense aria-label="titles by rule" />;
@@ -819,6 +826,36 @@ function SelectionToolbar({
       <span className="kat__sr" aria-live="polite">
         {said}
       </span>
+    </div>
+  );
+}
+
+// ScrollEdges holds a table that scrolls sideways where it is wider than the
+// screen, and fades the edge it goes on past, so people see there is more.
+function ScrollEdges({ children }: { children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState<'' | 'left' | 'right' | 'both'>('');
+  useEffect(() => {
+    const el = box.current?.querySelector<HTMLElement>('.nc-table__scroll');
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > 1;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      setMore(left && right ? 'both' : left ? 'left' : right ? 'right' : '');
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro?.disconnect();
+    };
+  }, []);
+  return (
+    <div ref={box} className="kat__hscroll" data-more={more || undefined}>
+      {children}
     </div>
   );
 }
@@ -972,7 +1009,7 @@ function ProcessDialog({
       }
     >
       <div className="kat__form">
-        <p className="kat__confirm-body">{CONFIRM_BODY}</p>
+        <p className="kat__confirm-body">{confirmBody(processing.scope.titles)}</p>
         {facts.length > 0 && (
           <dl className="kat__kv kat__confirm-facts">
             {facts.map((f) => (

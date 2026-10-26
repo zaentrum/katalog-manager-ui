@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   CLEARED_FILTER,
-  CONFIRM_BODY,
   DEFAULT_FILTER,
   KIND_OPTIONS,
   NO_SELECTION,
@@ -10,6 +9,7 @@ import {
   announceText,
   appendRows,
   checkState,
+  confirmBody,
   confirmFacts,
   countText,
   emptyState,
@@ -27,14 +27,15 @@ import {
   loadFailure,
   matchingScope,
   notCheckedHere,
+  nowAndAfter,
   offersMatching,
+  outcomeLine,
   outcomeText,
   pageState,
   pickRule,
   pollMs,
   processLabel,
   queueParts,
-  queuedAny,
   queuedToasts,
   rowStatus,
   rowTitle,
@@ -45,8 +46,8 @@ import {
   selectedCount,
   selectionText,
   sentenceCase,
-  sizeChange,
   sizeText,
+  skipBanner,
   staleText,
   titlesOf,
   withRule,
@@ -73,6 +74,7 @@ const row = (r: Partial<ComplianceRow>): ComplianceRow => ({
   packageBytes: 59 * GB,
   estimatedBytes: 12 * GB,
   queue: null,
+  queueReason: null,
   evaluatedAt: '2026-10-26T08:00:00Z',
   ...r,
 });
@@ -190,10 +192,21 @@ test('what processing again does to a title, from the rules it breaks', () => {
   assert.equal(outcomeText(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null }] }), capsChecked), '');
 });
 
+test('the outcome line joins the estimate to what processing again does', () => {
+  assert.equal(outcomeLine(row({ findings: breaking('OVER_SIZE_CAP'), estimatedBytes: 11.8 * GB }), true), `Re-encoded, then packaged again, at most 11.8${NB}GB`);
+  assert.equal(outcomeLine(row({ findings: breaking('NO_SURROUND'), estimatedBytes: null }), true), 'Packaged again; the video is copied');
+  assert.equal(outcomeLine(row({ findings: breaking('NOT_PACKAGED'), packageBytes: null, estimatedBytes: 14.1 * GB }), true), `Packaged for the first time, at most 14.1${NB}GB`);
+  // a rule the console doesn't know, with an estimate
+  assert.equal(outcomeLine(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null }] }), true), `At most 12${NB}GB`);
+});
+
 test('a row’s status in the status vocabulary’s words; a title done has none', () => {
   assert.deepEqual(rowStatus('queued'), { word: 'queued', tone: 'blue', detail: null });
   assert.deepEqual(rowStatus('sent'), { word: 'processing', tone: 'blue', detail: null });
   assert.deepEqual(rowStatus('failed'), { word: 'needs attention', tone: 'amber', detail: 'Processing failed' });
+  // the queue's reason, when it gives one
+  assert.equal(rowStatus('failed', 'the original couldn’t be read.')?.detail, 'Processing failed: the original couldn’t be read');
+  assert.equal(rowStatus('failed', '  ')?.detail, 'Processing failed');
   assert.equal(rowStatus('done'), null);
   assert.equal(rowStatus(null), null);
   assert.equal(inQueue('queued'), true);
@@ -235,9 +248,10 @@ test('the header checkbox ticks the rows on screen; only then is every match off
   const s = run({ type: 'page', on: true, rows: page });
   assert.deepEqual(ids(s), ['a', 'b', 'c']);
   assert.equal(pageState(s, page), 'all');
+  // 248 the queue doesn't hold: more than the 3 on screen that can be ticked
   assert.equal(offersMatching(s, page, 248), true);
-  // every match is on screen already: nothing more to offer
-  assert.equal(offersMatching(s, page, 4), false);
+  // every title that could be queued is on screen and ticked: nothing more to offer
+  assert.equal(offersMatching(s, page, 3), false);
   // not every row on screen ticked: not offered
   assert.equal(offersMatching(run({ type: 'row', row: a, on: true, loaded: page }), page, 248), false);
   assert.equal(offersMatching(NO_SELECTION, [], 248), false);
@@ -291,51 +305,67 @@ test('the count is read out after each change, and the clear is said', () => {
 
 // ---- processing again
 
-test('the bulk button, the confirm’s title and its button name the count', () => {
+test('the bulk button, the confirm’s title and its button name the count; the body is one title’s or several’s', () => {
   assert.equal(processLabel(12), 'process 12 titles again');
   assert.equal(processLabel(1), 'process 1 title again');
   assert.equal(processLabel(2409), 'process 2,409 titles again');
   assert.equal(
-    CONFIRM_BODY,
-    "Each title is processed again from its original, with today's settings, one after another. Its current version keeps playing until the new one is ready, and the original isn't changed.",
+    confirmBody(12),
+    'Each title is processed again from its original, with today’s settings, one after another. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
+  );
+  assert.equal(
+    confirmBody(1),
+    'The title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
   );
 });
 
-test('the confirm’s facts: the one title’s name, the packages now and at most after', () => {
+test('the confirm’s facts: the one title’s name, the packages now and at most after, in words', () => {
   assert.deepEqual(confirmFacts(rowsScope([a])), [
     { label: 'title', value: 'Vellmar Station (2019)' },
-    { label: 'package', value: `59${NB}GB → at most 12${NB}GB` },
+    { label: 'package', value: `59${NB}GB now, at most 12${NB}GB after` },
   ]);
   const two = rowsScope([a, row({ itemId: 'b', packageBytes: 41 * GB, estimatedBytes: null })]);
   assert.deepEqual(two, { titles: 2, name: null, packageBytes: 100 * GB, estimatedBytes: 12 * GB });
-  assert.deepEqual(confirmFacts(two), [{ label: 'packages', value: `100${NB}GB → at most 12${NB}GB` }]);
-  // every match: the report's totals over all of them
-  const all = matchingScope({ titles: 248, originalBytes: 9e12, packageBytes: 8.8e12, estimatedBytes: 2.3e12 });
+  assert.deepEqual(confirmFacts(two), [{ label: 'packages', value: `100${NB}GB now, at most 12${NB}GB after` }]);
+  // every match: the report's totals over all of them the queue doesn't hold
+  const all = matchingScope({ titles: 248, originalBytes: 9e12, packageBytes: 5.93e12, estimatedBytes: 1.3e12 });
   assert.equal(all.titles, 248);
-  assert.deepEqual(confirmFacts(all), [{ label: 'packages', value: `8.8${NB}TB → at most 2.3${NB}TB` }]);
-  // never packaged: none now, at most after
-  assert.deepEqual(confirmFacts(rowsScope([row({ packageBytes: null })])).at(-1), { label: 'package', value: `— → at most 12${NB}GB` });
+  assert.deepEqual(confirmFacts(all), [{ label: 'packages', value: `5.9${NB}TB now, at most 1.3${NB}TB after` }]);
+  // never packaged: at most after only; no estimate: now only
+  assert.deepEqual(confirmFacts(rowsScope([row({ packageBytes: null })])).at(-1), { label: 'package', value: `at most 12${NB}GB after` });
+  assert.equal(nowAndAfter(59 * GB, null), `59${NB}GB now`);
+  assert.equal(nowAndAfter(null, null), '');
   assert.deepEqual(confirmFacts({ titles: 3, name: null, packageBytes: 0, estimatedBytes: null }), []);
 });
 
-test('after queueing, a toast counts what was queued; what the queue held or skipped follows in a plain one', () => {
-  assert.deepEqual(queuedToasts({ queued: 12, alreadyQueued: 0, skipped: 0, message: '' }), [
-    { state: 'success', text: '12 titles queued to be processed again.' },
+const result = (r: Partial<Parameters<typeof queuedToasts>[0]>) => ({ queued: 0, alreadyQueued: 0, skipped: 0, skippedTitles: [], message: '', ...r });
+
+test('after queueing, a toast counts what was queued, without a full stop; what the queue held follows in a plain one', () => {
+  assert.deepEqual(queuedToasts(result({ queued: 12 })), [{ state: 'success', text: '12 titles queued to be processed again' }]);
+  assert.deepEqual(queuedToasts(result({ queued: 1 })), [{ state: 'success', text: '1 title queued to be processed again' }]);
+  assert.deepEqual(queuedToasts(result({ queued: 10, alreadyQueued: 2, skipped: 1 })), [
+    { state: 'success', text: '10 titles queued to be processed again' },
+    { state: 'neutral', text: '2 in the queue already' },
   ]);
-  assert.deepEqual(queuedToasts({ queued: 1, alreadyQueued: 0, skipped: 0, message: '' }), [
-    { state: 'success', text: '1 title queued to be processed again.' },
-  ]);
-  assert.deepEqual(queuedToasts({ queued: 10, alreadyQueued: 2, skipped: 1, message: '' }), [
-    { state: 'success', text: '10 titles queued to be processed again.' },
-    { state: 'neutral', text: '2 in the queue already · 1 skipped' },
-  ]);
-  assert.deepEqual(queuedToasts({ queued: 0, alreadyQueued: 3, skipped: 0, message: '' }), [
-    { state: 'neutral', text: '3 in the queue already' },
-  ]);
-  // nothing queued nor held: no toast, the page says it failed
-  assert.deepEqual(queuedToasts({ queued: 0, alreadyQueued: 0, skipped: 4, message: 'no file' }), []);
-  assert.equal(queuedAny({ queued: 0, alreadyQueued: 0, skipped: 4, message: '' }), false);
-  assert.equal(queuedAny({ queued: 0, alreadyQueued: 1, skipped: 0, message: '' }), true);
+  assert.deepEqual(queuedToasts(result({ alreadyQueued: 3 })), [{ state: 'neutral', text: '3 in the queue already' }]);
+  // titles skipped are no toast: the banner says it
+  assert.deepEqual(queuedToasts(result({ skipped: 4 })), []);
+});
+
+test('titles the queue didn’t take are a warning banner, each one and its reason under details', () => {
+  const one = { itemId: 'm2', title: 'Ruddlow Hill (1991)', reason: 'its original was deleted after packaging.' };
+  assert.deepEqual(skipBanner(result({ skipped: 1, skippedTitles: [one] })), {
+    text: '1 title wasn’t queued: its original was deleted after packaging.',
+    detail: 'Ruddlow Hill (1991): its original was deleted after packaging',
+  });
+  const three = [one, { itemId: 'm7', title: 'Tarsby Road (2008)', reason: 'it isn’t in the catalog any more' }, { itemId: 'e1', title: 'Pellam Bay · S01E02 · Chapter 2', reason: 'its file is a disc image' }];
+  assert.deepEqual(skipBanner(result({ queued: 9, skipped: 3, skippedTitles: three })), {
+    text: '3 titles weren’t queued.',
+    detail: 'Ruddlow Hill (1991): its original was deleted after packaging\nTarsby Road (2008): it isn’t in the catalog any more\nPellam Bay · S01E02 · Chapter 2: its file is a disc image',
+  });
+  // a count without the titles: katalog-manager's message under details
+  assert.deepEqual(skipBanner(result({ skipped: 2, message: '2 skipped' })), { text: '2 titles weren’t queued.', detail: '2 skipped' });
+  assert.equal(skipBanner(result({ queued: 4 })), null);
 });
 
 // ---- sizes
@@ -362,46 +392,39 @@ test('sizes as chino’s downloads write them: decimal, GB with one decimal and 
   assert.equal(sizeText(2 * GB), `2${NB}GB`);
 });
 
-test('a package reads now and at most after, or as it is without an estimate', () => {
-  assert.equal(sizeChange(59 * GB, 12 * GB), `59${NB}GB → at most 12${NB}GB`);
-  assert.equal(sizeChange(59 * GB, null), `59${NB}GB`);
-  assert.equal(sizeChange(null, 12 * GB), `— → at most 12${NB}GB`);
-  assert.equal(sizeChange(0, null), '—');
-});
-
 // ---- the report's states
 
 const gqlError = (message: string) => Object.assign(new Error(message), { name: 'GqlError' });
 
-test('an older katalog-manager’s validation errors are a katalog-manager without the rules check', () => {
+test('an older katalog-manager’s validation errors read as a catalog service without the rules check, its name under details', () => {
   assert.equal(notCheckedHere('Unknown type "ComplianceKind".; Cannot query field "libraryCompliance" on type "Query".'), true);
   assert.equal(notCheckedHere('Unknown type "ComplianceRule".'), true);
   assert.equal(notCheckedHere('Cannot query field "queueReworkMatching" on type "Mutation".'), true);
   assert.equal(notCheckedHere('Cannot query field "matching" on type "ComplianceReport".'), false);
   assert.equal(notCheckedHere(null), false);
   assert.deepEqual(loadFailure(gqlError('Cannot query field "libraryCompliance" on type "Query".')), {
-    title: "couldn't load the rules",
-    reason: 'This katalog-manager has no rules check.',
+    title: 'couldn’t load the rules',
+    reason: 'The catalog service on this server is older than this console and has no rules check.',
     retry: false,
-    detail: 'Cannot query field "libraryCompliance" on type "Query".',
+    detail: 'katalog-manager: Cannot query field "libraryCompliance" on type "Query".',
   });
 });
 
 test('a list that couldn’t load says why, by the HTTP status, the reason only', () => {
   const why = (e: unknown) => loadFailure(e).reason;
-  assert.equal(why(new TypeError('Failed to fetch')), "Can't reach the server.");
-  assert.equal(why(new Error('katalog-manager 408')), "Can't reach the server.");
+  assert.equal(why(new TypeError('Failed to fetch')), 'Can’t reach the server.');
+  assert.equal(why(new Error('katalog-manager 408')), 'Can’t reach the server.');
   assert.equal(why(new Error('katalog-manager 429')), 'The server is busy.');
   assert.equal(why(new Error('katalog-manager 500')), 'The server ran into a problem.');
   assert.equal(why(new Error('katalog-manager 502')), 'The server ran into a problem.');
   // a 404 on a list: the app and the server don't match
-  assert.equal(why(new Error('katalog-manager 404')), "The server didn't accept the request. Check for an app update.");
-  assert.equal(why(new Error('katalog-manager 400')), "The server didn't accept the request. Check for an app update.");
-  assert.deepEqual(loadFailure(new Error('katalog-manager 403')), { title: "you don't have access to this", reason: '', retry: false, detail: 'HTTP 403' });
+  assert.equal(why(new Error('katalog-manager 404')), 'The server didn’t accept the request. Check for an app update.');
+  assert.equal(why(new Error('katalog-manager 400')), 'The server didn’t accept the request. Check for an app update.');
+  assert.deepEqual(loadFailure(new Error('katalog-manager 403')), { title: 'you don’t have access to this', reason: '', retry: false, detail: 'HTTP 403' });
   assert.equal(loadFailure(new Error('katalog-manager 502')).detail, 'HTTP 502');
-  assert.equal(loadFailure(new Error('katalog-manager 502')).title, "couldn't load the rules");
+  assert.equal(loadFailure(new Error('katalog-manager 502')).title, 'couldn’t load the rules');
   // a query this katalog-manager doesn't take, and a problem it ran into
-  assert.equal(why(gqlError('Cannot query field "matching" on type "ComplianceReport".')), "The server didn't accept the request.");
+  assert.equal(why(gqlError('Cannot query field "matching" on type "ComplianceReport".')), 'The server didn’t accept the request.');
   assert.equal(why(gqlError('pq: connection refused')), 'The server ran into a problem.');
   assert.equal(loadFailure(gqlError('pq: connection refused')).detail, 'pq: connection refused');
   assert.equal(why('something else'), 'The server ran into a problem.');
@@ -409,8 +432,8 @@ test('a list that couldn’t load says why, by the HTTP status, the reason only'
 
 test('a refresh that failed says how old the list on the screen is', () => {
   const now = Date.parse('2026-10-26T12:00:00Z');
-  assert.equal(staleText(now - 4 * 60_000, now), "Couldn't refresh the list; it shows what was loaded 4m ago.");
-  assert.equal(staleText(null, now), "Couldn't refresh the list.");
+  assert.equal(staleText(now - 4 * 60_000, now), 'Couldn’t refresh the list; it shows what was loaded 4m ago.');
+  assert.equal(staleText(null, now), 'Couldn’t refresh the list.');
 });
 
 test('the check is running, done, or never ran', () => {
@@ -425,7 +448,7 @@ test('with no title listed, the table’s place says which kind of empty it is',
   assert.equal(emptyState(checked, { ...DEFAULT_FILTER, kind: 'EPISODE' })?.text, 'Every episode follows the rules.');
   assert.equal(emptyState(checked, CLEARED_FILTER)?.text, 'Every title follows the rules.');
   assert.equal(
-    emptyState({ ...checked, notEvaluated: ["The transcoder hasn't reported its rules."] }, DEFAULT_FILTER)?.text,
+    emptyState({ ...checked, notEvaluated: ['The transcoder hasn’t reported its rules.'] }, DEFAULT_FILTER)?.text,
     'Every movie follows the rules that were checked.',
   );
   assert.deepEqual(emptyState(checked, { ...DEFAULT_FILTER, search: 'pine' }), {
@@ -437,7 +460,7 @@ test('with no title listed, the table’s place says which kind of empty it is',
   assert.deepEqual(emptyState({ ...checked, evaluatedAt: null }, DEFAULT_FILTER), {
     kind: 'unknown',
     title: 'not checked',
-    text: "The titles haven't been checked against the rules.",
+    text: 'The titles haven’t been checked against the rules.',
   });
   // the first check runs: the facts line says so, nothing more
   assert.equal(emptyState({ ...checked, evaluatedAt: null, evaluating: true }, DEFAULT_FILTER), null);

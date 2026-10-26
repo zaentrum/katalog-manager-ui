@@ -55,6 +55,7 @@ export interface ComplianceRow {
   packageBytes: number | null;
   estimatedBytes: number | null; // the package at most, under the rules
   queue: string | null; // queued | sent | done | failed: where the title stands in the re-encode queue
+  queueReason: string | null; // why its processing failed, when it did
   evaluatedAt: string;
 }
 export interface ComplianceSummary {
@@ -83,16 +84,24 @@ export interface ComplianceReport {
   evaluatedAt: string | null; // the oldest evaluation in the report; null when never evaluated
   evaluating: boolean;
   matching: ComplianceTotals;
+  queueable: ComplianceTotals; // of those matching, the titles the queue doesn't hold
   queue: ComplianceQueueCounts;
   summary: ComplianceSummary[];
   rows: ComplianceRow[]; // the titles that break a rule, biggest package (then original) first
   nextCursor: string | null;
+}
+/** A title the queue didn't take, and why. */
+export interface ComplianceSkip {
+  itemId: string;
+  title: string;
+  reason: string;
 }
 /** What queueRework and queueReworkMatching answer. */
 export interface ComplianceQueued {
   queued: number;
   alreadyQueued: number;
   skipped: number;
+  skippedTitles: ComplianceSkip[];
   message: string;
 }
 
@@ -269,6 +278,16 @@ export function outcomeText(r: Pick<ComplianceRow, 'findings' | 'packageBytes'>,
   return '';
 }
 
+/** The outcome line under a row's findings: what processing it again does,
+ *  with its package at most after when there is an estimate: "Re-encoded,
+ *  then packaged again, at most 11.8 GB". */
+export function outcomeLine(r: Pick<ComplianceRow, 'findings' | 'packageBytes' | 'estimatedBytes'>, capsChecked: boolean): string {
+  const outcome = outcomeText(r, capsChecked);
+  const after = r.estimatedBytes != null && r.estimatedBytes > 0 ? `at most ${fmtBytes(r.estimatedBytes)}` : '';
+  if (!after) return outcome;
+  return outcome ? `${outcome}, ${after}` : sentenceCase(after);
+}
+
 /** rows, then those of more not among them (a page loaded after). */
 export function appendRows(rows: readonly ComplianceRow[], more: readonly ComplianceRow[]): ComplianceRow[] {
   const seen = new Set(rows.map((r) => r.itemId));
@@ -284,17 +303,22 @@ export function inQueue(queue: string | null | undefined): boolean {
 }
 
 /** A row's status, in the status vocabulary's words: queued, processing,
- *  or needs attention when its processing failed; none otherwise. A title
- *  processed and within the rules leaves the list, so there is no lasting
- *  "done". */
-export function rowStatus(queue: string | null | undefined): { word: string; tone: 'blue' | 'amber'; detail: string | null } | null {
+ *  or needs attention when its processing failed, with the queue's reason;
+ *  none otherwise. A title processed and within the rules leaves the list,
+ *  so there is no lasting "done". */
+export function rowStatus(
+  queue: string | null | undefined,
+  reason?: string | null,
+): { word: string; tone: 'blue' | 'amber'; detail: string | null } | null {
   switch (queue) {
     case 'queued':
       return { word: 'queued', tone: 'blue', detail: null };
     case 'sent':
       return { word: 'processing', tone: 'blue', detail: null };
-    case 'failed':
-      return { word: 'needs attention', tone: 'amber', detail: 'Processing failed' };
+    case 'failed': {
+      const why = reason?.trim().replace(/\.$/, '');
+      return { word: 'needs attention', tone: 'amber', detail: why ? `Processing failed: ${why}` : 'Processing failed' };
+    }
     default:
       return null;
   }
@@ -385,9 +409,10 @@ export function isSelected(s: Selection, row: ComplianceRow): boolean {
   return s.mode === 'matching' || s.rows.some((r) => r.itemId === row.itemId);
 }
 
-/** How many titles are ticked: every match counts all that match. */
-export function selectedCount(s: Selection, matching: number): number {
-  return s.mode === 'matching' ? matching : s.rows.length;
+/** How many titles are ticked: every match counts all that match and that
+ *  the queue doesn't hold already (queueable). */
+export function selectedCount(s: Selection, queueable: number): number {
+  return s.mode === 'matching' ? queueable : s.rows.length;
 }
 
 /** The ticked rows the list doesn't show: a filter hides them. */
@@ -407,11 +432,12 @@ export function pageState(s: Selection, loaded: readonly ComplianceRow[]): 'none
   return n === 0 ? 'none' : n === can.length ? 'all' : 'some';
 }
 
-/** True right after the header checkbox has ticked every row shown, while
- *  more titles match than are shown: then "select all N matching" is
- *  offered. */
-export function offersMatching(s: Selection, loaded: readonly ComplianceRow[], matching: number): boolean {
-  return s.mode === 'rows' && pageState(s, loaded) === 'all' && matching > loaded.length;
+/** True right after the header checkbox has ticked every row shown that
+ *  can be ticked, while more titles could be queued than that: then
+ *  "select all N matching" is offered, N the titles the queue doesn't hold
+ *  (queueable). */
+export function offersMatching(s: Selection, loaded: readonly ComplianceRow[], queueable: number): boolean {
+  return s.mode === 'rows' && pageState(s, loaded) === 'all' && queueable > loaded.filter(pickable).length;
 }
 
 /** The selection toolbar's count: "12 selected", "8 selected · 3 hidden by
@@ -433,9 +459,13 @@ export function processLabel(titles: number): string {
   return titles === 1 ? 'process 1 title again' : `process ${fmtCount(titles)} titles again`;
 }
 
-/** What the confirm says processing titles again does. */
-export const CONFIRM_BODY =
-  "Each title is processed again from its original, with today's settings, one after another. Its current version keeps playing until the new one is ready, and the original isn't changed.";
+/** What the confirm says processing titles again does: of one title, and of
+ *  several. */
+export function confirmBody(titles: number): string {
+  return titles === 1
+    ? 'The title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready, and the original isn’t changed.'
+    : 'Each title is processed again from its original, with today’s settings, one after another. Its current version keeps playing until the new one is ready, and the original isn’t changed.';
+}
 
 /** What a confirm asks about: how many titles, the one's name, and their
  *  packages' size now and at most after, where known. */
@@ -458,9 +488,17 @@ export function rowsScope(rows: readonly ComplianceRow[]): ProcessScope {
 }
 
 /** The scope of processing every title that matches again, from the report's
- *  totals over all of them. */
+ *  totals over all of them that the queue doesn't hold (queueable). */
 export function matchingScope(m: ComplianceTotals): ProcessScope {
   return { titles: m.titles, name: null, packageBytes: m.packageBytes, estimatedBytes: m.estimatedBytes };
+}
+
+/** A package's size now and at most after, in words: "5.9 TB now, at most
+ *  1.3 TB after", "59 GB now", "at most 12 GB after"; '' with neither. */
+export function nowAndAfter(now: number | null | undefined, after: number | null | undefined): string {
+  return [now != null && now > 0 ? `${fmtBytes(now)} now` : '', after != null && after > 0 ? `at most ${fmtBytes(after)} after` : '']
+    .filter(Boolean)
+    .join(', ');
 }
 
 /** The confirm's facts under its sentence: the title, when it is one, and
@@ -468,32 +506,36 @@ export function matchingScope(m: ComplianceTotals): ProcessScope {
 export function confirmFacts(s: ProcessScope): { label: string; value: string }[] {
   const facts: { label: string; value: string }[] = [];
   if (s.name) facts.push({ label: 'title', value: s.name });
-  if (s.packageBytes != null && (s.packageBytes > 0 || (s.estimatedBytes ?? 0) > 0)) {
-    facts.push({ label: s.titles === 1 ? 'package' : 'packages', value: sizeChange(s.packageBytes, s.estimatedBytes) });
-  }
+  const sizes = nowAndAfter(s.packageBytes, s.estimatedBytes);
+  if (sizes) facts.push({ label: s.titles === 1 ? 'package' : 'packages', value: sizes });
   return facts;
 }
 
 /** The toasts after titles were queued: how many were queued to be processed
- *  again, then, in a plain one, those the queue held already and those
- *  skipped. None when nothing was queued or held: that failed, and is a
- *  banner. */
+ *  again, then, in a plain one, those the queue held already. Titles it
+ *  didn't take are a failure, said in a banner (skipBanner). */
 export function queuedToasts(r: ComplianceQueued): { state: 'success' | 'neutral'; text: string }[] {
   const toasts: { state: 'success' | 'neutral'; text: string }[] = [];
   if (r.queued > 0) {
-    toasts.push({ state: 'success', text: `${fmtCount(r.queued)} ${r.queued === 1 ? 'title' : 'titles'} queued to be processed again.` });
+    toasts.push({ state: 'success', text: `${fmtCount(r.queued)} ${r.queued === 1 ? 'title' : 'titles'} queued to be processed again` });
   }
-  const rest = [
-    r.alreadyQueued ? `${fmtCount(r.alreadyQueued)} in the queue already` : '',
-    r.skipped ? `${fmtCount(r.skipped)} skipped` : '',
-  ].filter(Boolean);
-  if (rest.length && r.queued + r.alreadyQueued > 0) toasts.push({ state: 'neutral', text: rest.join(' · ') });
+  if (r.alreadyQueued > 0) toasts.push({ state: 'neutral', text: `${fmtCount(r.alreadyQueued)} in the queue already` });
   return toasts;
 }
 
-/** True when the queue took the titles, or held them already. */
-export function queuedAny(r: ComplianceQueued): boolean {
-  return r.queued + r.alreadyQueued > 0;
+/** The warning banner for the titles the queue didn't take, with each one
+ *  and its reason for under details; null when it took them all. One
+ *  title's reason is said in the banner too. */
+export function skipBanner(r: Pick<ComplianceQueued, 'skipped' | 'skippedTitles' | 'message'>): { text: string; detail: string } | null {
+  const skips = r.skippedTitles ?? [];
+  const n = Math.max(r.skipped, skips.length);
+  if (n === 0) return null;
+  const why = (reason: string) => reason.trim().replace(/\.$/, '');
+  const detail = skips.length ? skips.map((x) => `${x.title}: ${why(x.reason)}`).join('\n') : r.message.trim();
+  if (n === 1) {
+    return { text: skips[0]?.reason.trim() ? `1 title wasn’t queued: ${why(skips[0].reason)}.` : '1 title wasn’t queued.', detail };
+  }
+  return { text: `${fmtCount(n)} titles weren’t queued.`, detail };
 }
 
 // ---- sizes
@@ -527,12 +569,6 @@ export function sizeText(n: number | null | undefined): string {
   return n != null && n > 0 ? fmtBytes(n) : '—';
 }
 
-/** A package's size now and at most after it is processed again, as the
- *  rows, the summary and the confirm write it: "59 GB → at most 12 GB";
- *  "59 GB" without an estimate; "— → at most 12 GB" without a package. */
-export function sizeChange(now: number | null | undefined, after: number | null | undefined): string {
-  return after != null && after > 0 ? `${sizeText(now)} → at most ${fmtBytes(after)}` : sizeText(now);
-}
 
 // ---- the report's states
 
@@ -555,8 +591,8 @@ export function notCheckedHere(error: string | null | undefined): boolean {
  *  it doesn't take, or a problem it ran into. */
 export function loadFailure(e: unknown): { title: string; reason: string; retry: boolean; detail: string } {
   const message = e instanceof Error ? e.message : String(e);
-  const title = "couldn't load the rules";
-  const unreachable = { title, reason: "Can't reach the server.", retry: true, detail: message };
+  const title = 'couldn’t load the rules';
+  const unreachable = { title, reason: 'Can’t reach the server.', retry: true, detail: message };
   if (e instanceof TypeError) return unreachable;
   const http = /^katalog-manager (\d{3})$/.exec(message);
   if (http) {
@@ -565,13 +601,15 @@ export function loadFailure(e: unknown): { title: string; reason: string; retry:
     if (status === 408) return { ...unreachable, detail };
     if (status === 429) return { title, reason: 'The server is busy.', retry: true, detail };
     if (status >= 500) return { title, reason: 'The server ran into a problem.', retry: true, detail };
-    if (status === 403) return { title: "you don't have access to this", reason: '', retry: false, detail };
-    return { title, reason: "The server didn't accept the request. Check for an app update.", retry: true, detail };
+    if (status === 403) return { title: 'you don’t have access to this', reason: '', retry: false, detail };
+    return { title, reason: 'The server didn’t accept the request. Check for an app update.', retry: true, detail };
   }
   if (e instanceof Error && e.name === 'GqlError') {
-    if (notCheckedHere(message)) return { title, reason: 'This katalog-manager has no rules check.', retry: false, detail: message };
+    if (notCheckedHere(message)) {
+      return { title, reason: 'The catalog service on this server is older than this console and has no rules check.', retry: false, detail: `katalog-manager: ${message}` };
+    }
     if (/Cannot query field|Unknown (type|argument)/.test(message)) {
-      return { title, reason: "The server didn't accept the request.", retry: true, detail: message };
+      return { title, reason: 'The server didn’t accept the request.', retry: true, detail: message };
     }
   }
   return { title, reason: 'The server ran into a problem.', retry: true, detail: message };
@@ -581,7 +619,7 @@ export function loadFailure(e: unknown): { title: string; reason: string; retry:
  *  what it shows is. */
 export function staleText(loadedAt: number | null, now: number): string {
   const when = loadedAt ? ago(new Date(loadedAt).toISOString(), now) : '';
-  return when ? `Couldn't refresh the list; it shows what was loaded ${when}.` : "Couldn't refresh the list.";
+  return when ? `Couldn’t refresh the list; it shows what was loaded ${when}.` : 'Couldn’t refresh the list.';
 }
 
 /** Where the report's check stands: a check running, checked (evaluatedAt
@@ -599,7 +637,7 @@ export function emptyState(
   f: ComplianceFilter,
 ): { kind: 'unknown' | 'nomatch' | 'done'; title: string; text: string } | null {
   if (!r.evaluatedAt) {
-    return r.evaluating ? null : { kind: 'unknown', title: 'not checked', text: "The titles haven't been checked against the rules." };
+    return r.evaluating ? null : { kind: 'unknown', title: 'not checked', text: 'The titles haven’t been checked against the rules.' };
   }
   if (f.search.trim() || f.rules.length) {
     return { kind: 'nomatch', title: 'no matches', text: 'Nothing in this list matches the search and filters.' };
