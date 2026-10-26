@@ -409,6 +409,19 @@ a.kat__rowlink:focus-visible {
 .kat__worker-head .kat__mono {
   font-size: 12px;
 }
+/* a worker's settings: each label on a line where it fits, its value in
+   words, the raw config under details */
+.kat__kv.kat__settings {
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
+}
+.kat__settings dd {
+  min-width: 0;
+  color: var(--fg, #e6e6e6);
+}
+.kat__settings .kat__details,
+.kat__findings .kat__details {
+  margin-top: 2px;
+}
 .kat__checked {
   display: flex;
   flex-wrap: wrap;

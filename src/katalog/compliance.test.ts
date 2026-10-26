@@ -27,6 +27,7 @@ import {
   loadFailure,
   matchingScope,
   notCheckedHere,
+  notQueuedBanner,
   nowAndAfter,
   offersMatching,
   outcomeLine,
@@ -37,6 +38,7 @@ import {
   processLabel,
   queueParts,
   queuedToasts,
+  rowDetails,
   rowStatus,
   rowTitle,
   rowsScope,
@@ -47,7 +49,6 @@ import {
   selectionText,
   sentenceCase,
   sizeText,
-  skipBanner,
   staleText,
   titlesOf,
   withRule,
@@ -75,10 +76,11 @@ const row = (r: Partial<ComplianceRow>): ComplianceRow => ({
   estimatedBytes: 12 * GB,
   queue: null,
   queueReason: null,
+  queueDetail: null,
   evaluatedAt: '2026-10-26T08:00:00Z',
   ...r,
 });
-const breaking = (...rules: ComplianceFinding['rule'][]) => rules.map((rule) => ({ rule, text: 'x', measured: null, limit: null }));
+const breaking = (...rules: ComplianceFinding['rule'][]) => rules.map((rule) => ({ rule, text: 'x', measured: null, limit: null, detail: null }));
 
 test('counts carry thousands separators, and the titles of a kind are counted in their own words', () => {
   assert.equal(fmtCount(2500), '2,500');
@@ -95,13 +97,13 @@ test('every rule has a label in the monospace voice and an option in the body fa
   assert.deepEqual(RULE_ORDER.map(ruleLabel), [
     'not packaged',
     'packaging failed',
-    'over the bitrate cap',
+    'over the bit rate cap',
     'over the size cap',
     'video not HEVC',
     'no surround track',
     'image subtitles missing',
   ]);
-  assert.deepEqual(RULE_ORDER.map(ruleOption).slice(2, 5), ['Over the bitrate cap', 'Over the size cap', 'Video not HEVC']);
+  assert.deepEqual(RULE_ORDER.map(ruleOption).slice(2, 5), ['Over the bit rate cap', 'Over the size cap', 'Video not HEVC']);
   assert.equal(ruleLabel('AUDIO_TOO_LOUD'), 'audio too loud');
   assert.deepEqual(inRuleOrder(['NO_SURROUND', 'ZZ_NEW', 'NOT_PACKAGED', 'AA_NEW', 'OVER_SIZE_CAP']), [
     'NOT_PACKAGED',
@@ -162,11 +164,36 @@ test('a movie reads with its year, an episode with its series and place', () => 
   );
 });
 
-test('a finding says katalog-manager’s sentence, else the rule and what was measured, in sentence case', () => {
-  const f = { rule: 'OVER_BITRATE_CAP' as const, text: 'Video at 58 Mbit/s, above the 14 Mbit/s the transcoder allows', measured: '58 Mbit/s', limit: '14 Mbit/s' };
-  assert.equal(findingText(f), 'Video at 58 Mbit/s, above the 14 Mbit/s the transcoder allows');
-  assert.equal(findingText({ ...f, text: '  ' }), 'Over the bitrate cap: 58 Mbit/s, limit 14 Mbit/s');
-  assert.equal(findingText({ rule: 'NOT_PACKAGED', text: '', measured: null, limit: null }), 'Not packaged');
+test('a finding says katalog-manager’s sentence, else the rule and what was measured, in sentence case; its detail is never in it', () => {
+  const f = {
+    rule: 'OVER_BITRATE_CAP' as const,
+    text: 'The video runs at 58 Mbit/s, above the 14 Mbit/s the transcoder allows for a 2160p movie.',
+    measured: '58 Mbit/s',
+    limit: '14 Mbit/s',
+    detail: null,
+  };
+  assert.equal(findingText(f), 'The video runs at 58 Mbit/s, above the 14 Mbit/s the transcoder allows for a 2160p movie.');
+  assert.equal(findingText({ ...f, text: '  ' }), 'Over the bit rate cap: 58 Mbit/s, limit 14 Mbit/s');
+  assert.equal(findingText({ rule: 'NOT_PACKAGED', text: '', measured: null, limit: null, detail: null }), 'Not packaged');
+  const h264 = { rule: 'VIDEO_NOT_HEVC' as const, text: 'The video is H.264, and the transcoder makes every video HEVC.', measured: 'H.264', limit: 'HEVC', detail: 'avc1.640028' };
+  assert.equal(findingText(h264), 'The video is H.264, and the transcoder makes every video HEVC.');
+  assert.equal(findingText({ ...h264, text: '' }), 'Video not HEVC: H.264, limit HEVC');
+});
+
+test('a row’s technical part goes under its details: each finding’s by its rule, then the queue’s by its status', () => {
+  const h264 = { rule: 'VIDEO_NOT_HEVC' as const, text: 'x', measured: 'H.264', limit: 'HEVC', detail: ' avc1.640028 ' };
+  const failed = { rule: 'PACKAGING_FAILED' as const, text: 'The transcoder failed.', measured: null, limit: null, detail: 'ffmpeg exited 1' };
+  assert.deepEqual(rowDetails(row({ findings: [h264] })), ['video not HEVC: avc1.640028']);
+  assert.deepEqual(rowDetails(row({ findings: [...breaking('OVER_SIZE_CAP'), h264], queue: 'failed', queueDetail: 'ffmpeg exited 1' })), [
+    'video not HEVC: avc1.640028',
+    'status: ffmpeg exited 1',
+  ]);
+  assert.deepEqual(rowDetails(row({ findings: [failed] })), ['packaging failed: ffmpeg exited 1']);
+  // nothing technical, or a blank detail: no details at all
+  assert.deepEqual(rowDetails(row({ findings: breaking('NO_SURROUND') })), []);
+  assert.deepEqual(rowDetails(row({ findings: [{ ...h264, detail: '  ' }] })), []);
+  // the queue's detail explains a status the row shows; a title done shows none
+  assert.deepEqual(rowDetails(row({ findings: breaking('NO_SURROUND'), queue: 'done', queueDetail: 'ffmpeg exited 1' })), []);
 });
 
 test('what processing again does to a title, from the rules it breaks', () => {
@@ -189,7 +216,7 @@ test('what processing again does to a title, from the rules it breaks', () => {
   assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED') }), false), 'Packaged again');
   assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED'), packageBytes: null }), capsChecked), 'Packaged for the first time');
   assert.equal(outcomeText(row({ findings: breaking('PACKAGING_FAILED', 'VIDEO_NOT_HEVC') }), capsChecked), 'Re-encoded, then packaged again');
-  assert.equal(outcomeText(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null }] }), capsChecked), '');
+  assert.equal(outcomeText(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null, detail: null }] }), capsChecked), '');
 });
 
 test('the outcome line joins the estimate to what processing again does', () => {
@@ -197,16 +224,19 @@ test('the outcome line joins the estimate to what processing again does', () => 
   assert.equal(outcomeLine(row({ findings: breaking('NO_SURROUND'), estimatedBytes: null }), true), 'Packaged again; the video is copied');
   assert.equal(outcomeLine(row({ findings: breaking('NOT_PACKAGED'), packageBytes: null, estimatedBytes: 14.1 * GB }), true), `Packaged for the first time, at most 14.1${NB}GB`);
   // a rule the console doesn't know, with an estimate
-  assert.equal(outcomeLine(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null }] }), true), `At most 12${NB}GB`);
+  assert.equal(outcomeLine(row({ findings: [{ rule: 'SOMETHING_NEW' as ComplianceFinding['rule'], text: 'x', measured: null, limit: null, detail: null }] }), true), `At most 12${NB}GB`);
 });
 
-test('a row’s status in the status vocabulary’s words; a title done has none', () => {
+test('a row’s status in the status vocabulary’s words, the queue’s reason as katalog-manager says it; a title done has none', () => {
   assert.deepEqual(rowStatus('queued'), { word: 'queued', tone: 'blue', detail: null });
   assert.deepEqual(rowStatus('sent'), { word: 'processing', tone: 'blue', detail: null });
-  assert.deepEqual(rowStatus('failed'), { word: 'needs attention', tone: 'amber', detail: 'Processing failed' });
-  // the queue's reason, when it gives one
-  assert.equal(rowStatus('failed', 'the original couldn’t be read.')?.detail, 'Processing failed: the original couldn’t be read');
-  assert.equal(rowStatus('failed', '  ')?.detail, 'Processing failed');
+  assert.deepEqual(rowStatus('failed'), { word: 'needs attention', tone: 'amber', detail: 'Processing failed.' });
+  // what a title waits for, and why it failed: the server's sentence as it is
+  assert.equal(rowStatus('queued', 'It is waiting for the transcoder.')?.detail, 'It is waiting for the transcoder.');
+  assert.equal(rowStatus('sent', ' The packager is working on it. ')?.detail, 'The packager is working on it.');
+  assert.equal(rowStatus('failed', 'The transcoder failed.')?.detail, 'The transcoder failed.');
+  assert.equal(rowStatus('failed', '  ')?.detail, 'Processing failed.');
+  assert.equal(rowStatus('done', 'The transcoder failed.'), null);
   assert.equal(rowStatus('done'), null);
   assert.equal(rowStatus(null), null);
   assert.equal(inQueue('queued'), true);
@@ -338,34 +368,92 @@ test('the confirm’s facts: the one title’s name, the packages now and at mos
   assert.deepEqual(confirmFacts({ titles: 3, name: null, packageBytes: 0, estimatedBytes: null }), []);
 });
 
-const result = (r: Partial<Parameters<typeof queuedToasts>[0]>) => ({ queued: 0, alreadyQueued: 0, skipped: 0, skippedTitles: [], message: '', ...r });
-
-test('after queueing, a toast counts what was queued, without a full stop; what the queue held follows in a plain one', () => {
-  assert.deepEqual(queuedToasts(result({ queued: 12 })), [{ state: 'success', text: '12 titles queued to be processed again' }]);
-  assert.deepEqual(queuedToasts(result({ queued: 1 })), [{ state: 'success', text: '1 title queued to be processed again' }]);
-  assert.deepEqual(queuedToasts(result({ queued: 10, alreadyQueued: 2, skipped: 1 })), [
-    { state: 'success', text: '10 titles queued to be processed again' },
-    { state: 'neutral', text: '2 in the queue already' },
-  ]);
-  assert.deepEqual(queuedToasts(result({ alreadyQueued: 3 })), [{ state: 'neutral', text: '3 in the queue already' }]);
-  // titles skipped are no toast: the banner says it
-  assert.deepEqual(queuedToasts(result({ skipped: 4 })), []);
+const result = (r: Partial<Parameters<typeof queuedToasts>[0]>) => ({
+  queued: 0,
+  alreadyQueued: 0,
+  skipped: 0,
+  skippedTitles: [],
+  message: '',
+  queuedText: null,
+  alreadyText: null,
+  notQueuedText: null,
+  ...r,
 });
 
-test('titles the queue didn’t take are a warning banner, each one and its reason under details', () => {
-  const one = { itemId: 'm2', title: 'Ruddlow Hill (1991)', reason: 'its original was deleted after packaging.' };
-  assert.deepEqual(skipBanner(result({ skipped: 1, skippedTitles: [one] })), {
+test('after queueing, the toasts are katalog-manager’s: what was queued, then, plain, what the queue held already', () => {
+  assert.deepEqual(queuedToasts(result({ queued: 12, queuedText: '12 titles queued to be processed again' })), [
+    { state: 'success', text: '12 titles queued to be processed again' },
+  ]);
+  assert.deepEqual(
+    queuedToasts(result({ queued: 10, alreadyQueued: 3, queuedText: '10 titles queued to be processed again', alreadyText: '3 titles already in the queue' })),
+    [
+      { state: 'success', text: '10 titles queued to be processed again' },
+      { state: 'neutral', text: '3 titles already in the queue' },
+    ],
+  );
+  // nothing queued: no success toast
+  assert.deepEqual(queuedToasts(result({ alreadyQueued: 1, alreadyText: '1 title already in the queue' })), [
+    { state: 'neutral', text: '1 title already in the queue' },
+  ]);
+  // titles not queued are no toast: the banner says it
+  assert.deepEqual(queuedToasts(result({ skipped: 4, notQueuedText: '4 titles weren’t queued: they have no file.' })), []);
+  assert.deepEqual(queuedToasts(result({ notQueuedText: 'Nothing was queued: no title was selected.' })), []);
+});
+
+test('a server that counts without saying it gets the toasts in the same words from the counts', () => {
+  assert.deepEqual(queuedToasts(result({ queued: 12 })), [{ state: 'success', text: '12 titles queued to be processed again' }]);
+  assert.deepEqual(queuedToasts(result({ queued: 1, alreadyQueued: 1, alreadyText: '  ' })), [
+    { state: 'success', text: '1 title queued to be processed again' },
+    { state: 'neutral', text: '1 title already in the queue' },
+  ]);
+  assert.deepEqual(queuedToasts(result({ queued: 2409, alreadyQueued: 3 })).map((t) => t.text), [
+    '2,409 titles queued to be processed again',
+    '3 titles already in the queue',
+  ]);
+  assert.deepEqual(queuedToasts(result({})), []);
+});
+
+const ruddlow = { itemId: 'm2', title: 'Ruddlow Hill (1991)', reason: 'its original was deleted after packaging' };
+const tarsby = { itemId: 'm7', title: 'Tarsby Road (2008)', reason: 'its original was deleted after packaging' };
+
+test('titles the queue didn’t take are a warning banner in katalog-manager’s words, each one and why under details', () => {
+  assert.deepEqual(
+    notQueuedBanner(result({ queued: 9, skipped: 2, skippedTitles: [ruddlow, tarsby], notQueuedText: '2 titles weren’t queued: their originals were deleted after packaging.' })),
+    {
+      text: '2 titles weren’t queued: their originals were deleted after packaging.',
+      detail: 'Ruddlow Hill (1991): its original was deleted after packaging\nTarsby Road (2008): its original was deleted after packaging',
+    },
+  );
+  // nothing queued at all, for want of a title: the banner says so, with nothing under details
+  assert.deepEqual(notQueuedBanner(result({ notQueuedText: 'Nothing was queued: no title was selected.' })), {
+    text: 'Nothing was queued: no title was selected.',
+    detail: '',
+  });
+  assert.deepEqual(notQueuedBanner(result({ notQueuedText: 'Nothing was queued: no title fits the filter anymore.' })), {
+    text: 'Nothing was queued: no title fits the filter anymore.',
+    detail: '',
+  });
+  assert.equal(notQueuedBanner(result({ queued: 4, queuedText: '4 titles queued to be processed again' })), null);
+  assert.equal(notQueuedBanner(result({ notQueuedText: ' ' })), null);
+});
+
+test('a server that counts titles skipped without saying it gets a sentence from the count', () => {
+  assert.deepEqual(notQueuedBanner(result({ skipped: 1, skippedTitles: [{ ...ruddlow, reason: 'its original was deleted after packaging.' }] })), {
     text: '1 title wasn’t queued: its original was deleted after packaging.',
     detail: 'Ruddlow Hill (1991): its original was deleted after packaging',
   });
-  const three = [one, { itemId: 'm7', title: 'Tarsby Road (2008)', reason: 'it isn’t in the catalog any more' }, { itemId: 'e1', title: 'Pellam Bay · S01E02 · Chapter 2', reason: 'its file is a disc image' }];
-  assert.deepEqual(skipBanner(result({ queued: 9, skipped: 3, skippedTitles: three })), {
+  const disc = { itemId: 'e1', title: 'Pellam Bay · S01E02 · Chapter 2', reason: 'its file is a disc image' };
+  assert.deepEqual(notQueuedBanner(result({ queued: 9, skipped: 3, skippedTitles: [ruddlow, tarsby, disc] })), {
     text: '3 titles weren’t queued.',
-    detail: 'Ruddlow Hill (1991): its original was deleted after packaging\nTarsby Road (2008): it isn’t in the catalog any more\nPellam Bay · S01E02 · Chapter 2: its file is a disc image',
+    detail:
+      'Ruddlow Hill (1991): its original was deleted after packaging\nTarsby Road (2008): its original was deleted after packaging\nPellam Bay · S01E02 · Chapter 2: its file is a disc image',
   });
   // a count without the titles: katalog-manager's message under details
-  assert.deepEqual(skipBanner(result({ skipped: 2, message: '2 skipped' })), { text: '2 titles weren’t queued.', detail: '2 skipped' });
-  assert.equal(skipBanner(result({ queued: 4 })), null);
+  assert.deepEqual(notQueuedBanner(result({ skipped: 2, message: '2 titles skipped: they have no file.' })), {
+    text: '2 titles weren’t queued.',
+    detail: '2 titles skipped: they have no file.',
+  });
+  assert.equal(notQueuedBanner(result({ queued: 4 })), null);
 });
 
 // ---- sizes

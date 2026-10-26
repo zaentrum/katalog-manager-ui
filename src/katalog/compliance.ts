@@ -16,11 +16,13 @@ export type ComplianceRule =
   | 'VIDEO_NOT_HEVC';
 export type ComplianceKind = 'MOVIE' | 'EPISODE';
 
-/** A setting a worker reported, as it names it. */
+/** A setting a worker reported, as it names it: its value in words, and the
+ *  raw config when the words aren't it ("source:hevc"). */
 export interface RuleSetting {
   key: string;
   label: string;
   value: string;
+  detail: string | null;
 }
 /** What a worker reported of its rules; null for a worker that never did. */
 export interface WorkerRules {
@@ -33,13 +35,15 @@ export interface PipelineRules {
   transcoder: WorkerRules | null;
   packager: WorkerRules | null;
 }
-/** A rule a title breaks: katalog-manager's sentence, and what it measured
- *  against the rule's limit, when it says. */
+/** A rule a title breaks: katalog-manager's sentence, what it measured
+ *  against the rule's limit, when it says, and the technical part (a tool's
+ *  output, a codec's id). */
 export interface ComplianceFinding {
   rule: ComplianceRule;
   text: string;
   measured: string | null;
   limit: string | null;
+  detail: string | null;
 }
 export interface ComplianceRow {
   itemId: string;
@@ -55,7 +59,8 @@ export interface ComplianceRow {
   packageBytes: number | null;
   estimatedBytes: number | null; // the package at most, under the rules
   queue: string | null; // queued | sent | done | failed: where the title stands in the re-encode queue
-  queueReason: string | null; // why its processing failed, when it did
+  queueReason: string | null; // why it waits or failed there, in a sentence
+  queueDetail: string | null; // the technical part of that ("ffmpeg exited 1")
   evaluatedAt: string;
 }
 export interface ComplianceSummary {
@@ -96,13 +101,17 @@ export interface ComplianceSkip {
   title: string;
   reason: string;
 }
-/** What queueRework and queueReworkMatching answer. */
+/** What queueRework and queueReworkMatching answer: the counts, and each
+ *  in katalog-manager's words, null where there is nothing to say. */
 export interface ComplianceQueued {
   queued: number;
   alreadyQueued: number;
   skipped: number;
   skippedTitles: ComplianceSkip[];
   message: string;
+  queuedText: string | null; // "12 titles queued to be processed again"
+  alreadyText: string | null; // "3 titles already in the queue"
+  notQueuedText: string | null; // "2 titles weren’t queued: …", "Nothing was queued: …"
 }
 
 // ---- words and numbers
@@ -140,7 +149,7 @@ export const RULE_ORDER: readonly ComplianceRule[] = [
 const RULE_LABELS: Record<ComplianceRule, string> = {
   NOT_PACKAGED: 'not packaged',
   PACKAGING_FAILED: 'packaging failed',
-  OVER_BITRATE_CAP: 'over the bitrate cap',
+  OVER_BITRATE_CAP: 'over the bit rate cap',
   OVER_SIZE_CAP: 'over the size cap',
   VIDEO_NOT_HEVC: 'video not HEVC',
   NO_SURROUND: 'no surround track',
@@ -153,7 +162,7 @@ export function ruleLabel(rule: string): string {
   return RULE_LABELS[rule as ComplianceRule] ?? rule.toLowerCase().replace(/_/g, ' ');
 }
 
-/** A rule as the rule filter offers it, in the body face: "Over the bitrate
+/** A rule as the rule filter offers it, in the body face: "Over the bit rate
  *  cap". */
 export function ruleOption(rule: string): string {
   return sentenceCase(ruleLabel(rule));
@@ -303,25 +312,36 @@ export function inQueue(queue: string | null | undefined): boolean {
 }
 
 /** A row's status, in the status vocabulary's words: queued, processing,
- *  or needs attention when its processing failed, with the queue's reason;
- *  none otherwise. A title processed and within the rules leaves the list,
- *  so there is no lasting "done". */
+ *  or needs attention when its processing failed; none otherwise. Its
+ *  detail is the queue's reason as katalog-manager says it, what the title
+ *  waits for or why it failed ("It is waiting for the transcoder.", "The
+ *  transcoder failed."). A title processed and within the rules leaves the
+ *  list, so there is no lasting "done". */
 export function rowStatus(
   queue: string | null | undefined,
   reason?: string | null,
 ): { word: string; tone: 'blue' | 'amber'; detail: string | null } | null {
+  const why = reason?.trim() || null;
   switch (queue) {
     case 'queued':
-      return { word: 'queued', tone: 'blue', detail: null };
+      return { word: 'queued', tone: 'blue', detail: why };
     case 'sent':
-      return { word: 'processing', tone: 'blue', detail: null };
-    case 'failed': {
-      const why = reason?.trim().replace(/\.$/, '');
-      return { word: 'needs attention', tone: 'amber', detail: why ? `Processing failed: ${why}` : 'Processing failed' };
-    }
+      return { word: 'processing', tone: 'blue', detail: why };
+    case 'failed':
+      return { word: 'needs attention', tone: 'amber', detail: why ?? 'Processing failed.' };
     default:
       return null;
   }
+}
+
+/** A row's technical part, for under its details and never in its lines:
+ *  each finding's (a tool's output, a codec's id) by its rule, then the
+ *  queue's, by the status it explains. None when there is none. */
+export function rowDetails(r: Pick<ComplianceRow, 'findings' | 'queue' | 'queueDetail'>): string[] {
+  const lines = r.findings.flatMap((f) => (f.detail?.trim() ? [`${ruleLabel(f.rule)}: ${f.detail.trim()}`] : []));
+  const queued = r.queueDetail?.trim();
+  if (queued && rowStatus(r.queue)) lines.push(`status: ${queued}`);
+  return lines;
 }
 
 /** The queue in numbers and words, the counts there are: "6 queued · 2
@@ -511,27 +531,42 @@ export function confirmFacts(s: ProcessScope): { label: string; value: string }[
   return facts;
 }
 
-/** The toasts after titles were queued: how many were queued to be processed
- *  again, then, in a plain one, those the queue held already. Titles it
- *  didn't take are a failure, said in a banner (skipBanner). */
+/** A text of katalog-manager's, or null for none. */
+function said(text: string | null | undefined): string | null {
+  return text?.trim() || null;
+}
+
+const titleCount = (n: number) => `${fmtCount(n)} ${n === 1 ? 'title' : 'titles'}`;
+
+/** The toasts after titles were queued, in katalog-manager's words: how many
+ *  were queued to be processed again, then, in a plain one, how many the
+ *  queue held already; none for a count it says nothing of. A server that
+ *  counts titles without saying them gets the same words from the counts.
+ *  Titles it didn't take are a banner (notQueuedBanner). */
 export function queuedToasts(r: ComplianceQueued): { state: 'success' | 'neutral'; text: string }[] {
   const toasts: { state: 'success' | 'neutral'; text: string }[] = [];
-  if (r.queued > 0) {
-    toasts.push({ state: 'success', text: `${fmtCount(r.queued)} ${r.queued === 1 ? 'title' : 'titles'} queued to be processed again` });
-  }
-  if (r.alreadyQueued > 0) toasts.push({ state: 'neutral', text: `${fmtCount(r.alreadyQueued)} in the queue already` });
+  const queued = said(r.queuedText) ?? (r.queued > 0 ? `${titleCount(r.queued)} queued to be processed again` : null);
+  if (queued) toasts.push({ state: 'success', text: queued });
+  const already = said(r.alreadyText) ?? (r.alreadyQueued > 0 ? `${titleCount(r.alreadyQueued)} already in the queue` : null);
+  if (already) toasts.push({ state: 'neutral', text: already });
   return toasts;
 }
 
-/** The warning banner for the titles the queue didn't take, with each one
- *  and its reason for under details; null when it took them all. One
- *  title's reason is said in the banner too. */
-export function skipBanner(r: Pick<ComplianceQueued, 'skipped' | 'skippedTitles' | 'message'>): { text: string; detail: string } | null {
+/** The warning banner for the titles the queue didn't take, or for nothing
+ *  queued at all ("Nothing was queued: no title was selected."), in
+ *  katalog-manager's words, with each title it didn't take and why for
+ *  under details; null when it says nothing of the kind. A server that
+ *  counts titles skipped without saying it gets a sentence from the count. */
+export function notQueuedBanner(
+  r: Pick<ComplianceQueued, 'skipped' | 'skippedTitles' | 'message' | 'notQueuedText'>,
+): { text: string; detail: string } | null {
   const skips = r.skippedTitles ?? [];
   const n = Math.max(r.skipped, skips.length);
-  if (n === 0) return null;
   const why = (reason: string) => reason.trim().replace(/\.$/, '');
-  const detail = skips.length ? skips.map((x) => `${x.title}: ${why(x.reason)}`).join('\n') : r.message.trim();
+  const detail = skips.length ? skips.map((x) => `${x.title}: ${why(x.reason)}`).join('\n') : n ? r.message.trim() : '';
+  const text = said(r.notQueuedText);
+  if (text) return { text, detail };
+  if (n === 0) return null;
   if (n === 1) {
     return { text: skips[0]?.reason.trim() ? `1 title wasn’t queued: ${why(skips[0].reason)}.` : '1 title wasn’t queued.', detail };
   }

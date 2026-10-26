@@ -32,6 +32,7 @@ import {
   isSelected,
   loadFailure,
   matchingScope,
+  notQueuedBanner,
   offersMatching,
   outcomeLine,
   pageState,
@@ -40,6 +41,7 @@ import {
   processLabel,
   queueParts,
   queuedToasts,
+  rowDetails,
   rowStatus,
   rowTitle,
   rowsScope,
@@ -49,7 +51,6 @@ import {
   selectedCount,
   selectionText,
   sizeText,
-  skipBanner,
   staleText,
   titlesOf,
   withRule,
@@ -71,8 +72,8 @@ const PAGE = 100;
 const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $first: Int, $after: String) {
   libraryCompliance(kind: $kind, rules: $rules, search: $search, first: $first, after: $after) {
     rules {
-      transcoder { worker version reportedAt rules { key label value } }
-      packager { worker version reportedAt rules { key label value } }
+      transcoder { worker version reportedAt rules { key label value detail } }
+      packager { worker version reportedAt rules { key label value detail } }
     }
     notEvaluated evaluatedAt evaluating
     matching { titles originalBytes packageBytes estimatedBytes }
@@ -81,8 +82,8 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     summary { rule titles packageBytes estimatedBytes }
     rows {
       itemId title year kind seriesId seriesTitle season episode
-      findings { rule text measured limit }
-      originalBytes packageBytes estimatedBytes queue queueReason evaluatedAt
+      findings { rule text measured limit detail }
+      originalBytes packageBytes estimatedBytes queue queueReason queueDetail evaluatedAt
     }
     nextCursor
   }
@@ -90,7 +91,7 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
 // Every title that breaks a rule, whatever the filter: the filter bar's
 // "230 of 279".
 const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { matching { titles } } }`;
-const QUEUED = `queued alreadyQueued skipped skippedTitles { itemId title reason } message`;
+const QUEUED = `queued alreadyQueued skipped skippedTitles { itemId title reason } message queuedText alreadyText notQueuedText`;
 const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { ${QUEUED} } }`;
 const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String) {
   queueReworkMatching(kind: $kind, rules: $rules, search: $search) { ${QUEUED} }
@@ -296,9 +297,10 @@ export function RulesView() {
   const queued = useCallback(
     (r: ComplianceQueued, p: Processing) => {
       setProcessing(null);
-      // titles the queue didn't take are a failure: a warning banner
-      const skips = skipBanner(r);
-      setProblem(skips ? { state: 'warning', text: skips.text, detail: skips.detail, retry: false } : null);
+      // titles the queue didn't take, or nothing queued at all, are a
+      // failure: a warning banner
+      const notQueued = notQueuedBanner(r);
+      setProblem(notQueued ? { state: 'warning', text: notQueued.text, detail: notQueued.detail, retry: false } : null);
       for (const t of queuedToasts(r)) pushToast(t);
       if (p.bulk) dispatch({ type: 'clear' });
       // the button that opened the dialog goes with the selection, or turns
@@ -433,6 +435,7 @@ export function RulesView() {
       header: 'findings',
       render: (r) => {
         const outcome = outcomeLine(r, capsChecked);
+        const details = rowDetails(r);
         return (
           <div className="kat__findings">
             <ul>
@@ -441,6 +444,7 @@ export function RulesView() {
               ))}
             </ul>
             {outcome && <span className="kat__outcome">{outcome}</span>}
+            {details.length > 0 && <Details detail={details.join('\n')} of={rowTitle(r)} />}
           </div>
         );
       },
@@ -678,7 +682,8 @@ function RulesPanel({ report, checking, onCheck }: { report: ComplianceReport; c
 }
 
 // WorkerBlock is what one worker reported of its rules, each setting by the
-// worker's own label, and when it reported; or that it never did.
+// worker's own label and in its words, the raw config under details, and
+// when it reported; or that it never did.
 function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
   return (
     <div className="kat__worker">
@@ -689,11 +694,14 @@ function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
       </div>
       {w &&
         (w.rules.length ? (
-          <dl className="kat__kv">
+          <dl className="kat__kv kat__settings">
             {w.rules.map((r) => (
               <Fragment key={r.key}>
                 <dt>{r.label}</dt>
-                <dd className="kat__mono">{r.value}</dd>
+                <dd>
+                  {r.value}
+                  {r.detail?.trim() && <Details detail={r.detail.trim()} of={r.label} />}
+                </dd>
               </Fragment>
             ))}
           </dl>
@@ -882,15 +890,24 @@ function Banner({
       <AlertTriangle size={15} aria-hidden className="kat__banner-glyph" />
       <div className="kat__banner-body">
         {children}
-        {detail && (
-          <details className="kat__details">
-            <summary>details</summary>
-            <code>{detail}</code>
-          </details>
-        )}
+        {detail && <Details detail={detail} />}
       </div>
       {actions}
     </div>
+  );
+}
+
+// Details is the technical part of something, one click away: an error, a
+// tool's output, raw config. of names what it belongs to for a screen
+// reader, where there are several.
+function Details({ detail, of }: { detail: string; of?: string }) {
+  return (
+    <details className="kat__details">
+      <summary>
+        details{of && <span className="kat__sr">: {of}</span>}
+      </summary>
+      <code>{detail}</code>
+    </details>
   );
 }
 
@@ -914,12 +931,7 @@ function Empty({
       <Icon size={20} aria-hidden className="kat__muted" />
       <h3 className="kat__h3">{title}</h3>
       {text && <Text variant="muted">{text}</Text>}
-      {detail && (
-        <details className="kat__details">
-          <summary>details</summary>
-          <code>{detail}</code>
-        </details>
-      )}
+      {detail && <Details detail={detail} />}
       {action}
     </div>
   );
