@@ -17,6 +17,17 @@ export function canReencode(type: string): boolean {
   return type === 'movie' || type === 'episode' || type === 'series';
 }
 
+/** What plays while a title is encoded again, as the confirms say it: of one
+ *  title, or of each of several (`each` names them: "episode", "title"). */
+export function meanwhileText(each?: string): string {
+  if (each) {
+    return `each ${each}’s current package plays while it is encoded. once its packaging starts it plays by ` +
+      'on-demand transcoding until the new package is complete, and anyone watching it then has to start again.';
+  }
+  return 'its current package plays while it is encoded. once packaging starts it plays by on-demand transcoding ' +
+    'until the new package is complete, and anyone watching it then has to start again.';
+}
+
 /** What the confirm says a re-encode of the title does, a paragraph each:
  *  what it encodes and with what, what plays meanwhile, and what it leaves
  *  alone. */
@@ -25,16 +36,14 @@ export function reencodeExplainer(type: string, title: string): string[] {
     return [
       `encodes every episode of “${title}” that has a file again with this instance’s current pipeline settings ` +
         '(the transcoder’s ladder and encoder, then the packager’s), and packages each again.',
-      'each episode’s current package plays while it is encoded. once its packaging starts it plays by on-demand ' +
-        'transcoding until the new package is complete, and anyone watching it then has to start again.',
+      meanwhileText('episode'),
       'an episode whose transcode or package is running is left alone.',
     ];
   }
   return [
     `encodes “${title}” again with this instance’s current pipeline settings (the transcoder’s ladder and ` +
       'encoder, then the packager’s), and packages it again.',
-    'its current package plays while it is encoded. once packaging starts it plays by on-demand transcoding until ' +
-      'the new package is complete, and anyone watching it then has to start again.',
+    meanwhileText(),
     'a transcode or package of it that is running is left alone.',
   ];
 }
