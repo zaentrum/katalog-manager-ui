@@ -12,7 +12,8 @@
 //   unreported  the transcoder never reported its rules: its caps are not checked
 //   old         a katalog-manager without the report: graph-gophers' validation errors
 //   down        katalog-manager answers 502
-// It keeps the queue in memory; restart it for the seeded state.
+// GET /api/manage/compliance.csv answers the same report as a CSV. It keeps
+// the queue in memory; restart it for the seeded state.
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.MOCK_PORT) || 8793;
@@ -79,9 +80,9 @@ const pick = (xs) => xs[Math.floor(rand() * xs.length)];
 const LANGUAGES = ['German', 'French', 'Italian', 'Japanese', 'Spanish', 'Portuguese (Brazil)', 'Chinese (Simplified)'];
 const finding = {
   // measured from the package's bit rate, or, where it gives none, from its
-  // size: "about"
-  bitrate: (mbit, cap, h, kind) => {
-    const about = rand() < 0.3 ? 'about ' : '';
+  // size and length (estimated): "about"
+  bitrate: (mbit, cap, h, kind, estimated) => {
+    const about = estimated ? 'about ' : '';
     return {
       rule: 'OVER_BITRATE_CAP',
       text: `The video runs at ${about}${mbps(mbit)}, above the ${mbps(cap)} the transcoder allows for a ${h}p ${kind}.`,
@@ -151,8 +152,31 @@ const finding = {
 // what a title takes at most under a cap: its video at the cap and a 5.1
 // track, a movie within the size cap too
 const atMost = (minutes, capMbit, sizeCap = Infinity) => Math.min(sizeCap, (minutes * 60 * (capMbit + 0.64) * 1e6) / 8);
-// a package's video bit rate, from its size and the title's length
+// a file's video bit rate, from its size and the title's length
 const mbitOf = (bytes, minutes) => round1((bytes * 8) / (minutes * 60) / 1e6);
+// a file of a video bit rate, for the title's length
+const bytesOf = (mbit, minutes) => (mbit * 1e6 * minutes * 60) / 8;
+
+// the frames of each height: 2160p from a height of 2,000 or a width of 3,200
+const FRAMES = { 2160: ['3840×2160', '3840×1600', '3840×2076'], 1080: ['1920×1080', '1920×800', '1920×1040'] };
+const ORIGINAL_AUDIO = ['7.1 TrueHD', '5.1 DTS-HD MA', '7.1 DTS-HD MA', '5.1 AC-3'];
+const PACKAGE_AUDIO = '5.1 E-AC-3 + 2.0 AAC';
+
+// a title's measures: the video of its package, else of its original, and
+// the caps of its kind and height
+function measures(row, { h, codec, mbit, estimated = false, minutes, frame = pick(FRAMES[h]) }) {
+  const kind = row.kind === 'MOVIE' ? 'movie' : 'episode';
+  return Object.assign(row, {
+    resolution: frame,
+    videoCodec: codec,
+    videoBitrate: mbit * 1e6,
+    videoBitrateEstimated: estimated,
+    bitrateCap: CAPS[kind][h] * 1e6,
+    sizeCap: row.kind === 'MOVIE' ? SIZE_CAP : null,
+    durationSeconds: Math.round(minutes * 60),
+    originalAudio: pick(ORIGINAL_AUDIO),
+  });
+}
 
 const FIRST = ['Vell', 'Quill', 'Okker', 'Bran', 'Mirr', 'Tars', 'Kest', 'Arv', 'Salt', 'Wen', 'Ferr', 'Ils', 'Dun', 'Calv',
   'Orr', 'Thorn', 'Lund', 'Bram', 'Cair', 'Gald', 'Hesk', 'Jorr', 'Nesb', 'Oss', 'Rudd', 'Skel', 'Tyv'];
@@ -167,45 +191,69 @@ function movies() {
     const p = rand();
     const row = { itemId: `m${String(i + 1).padStart(3, '0')}`, title, year: 1968 + Math.floor(rand() * 58), kind: 'MOVIE',
       seriesId: null, seriesTitle: null, season: null, episode: null, findings: [], originalBytes: 0, packageBytes: null,
-      estimatedBytes: null, queue: null };
+      estimatedBytes: null, queue: null, packageAudio: PACKAGE_AUDIO };
     if (p < 0.45) {
       // a near-copy of a 4K remux
+      const estimated = rand() < 0.3;
       row.originalBytes = between(42, 78) * GiB;
       row.packageBytes = row.originalBytes * between(0.9, 0.98);
-      row.findings = [finding.bitrate(mbitOf(row.packageBytes, minutes), CAPS.movie[2160], 2160, 'movie'), finding.size()];
+      const mbit = mbitOf(row.packageBytes, minutes);
+      measures(row, { h: 2160, codec: 'HEVC', mbit, estimated, minutes });
+      row.findings = [finding.bitrate(mbit, CAPS.movie[2160], 2160, 'movie', estimated), finding.size()];
       row.estimatedBytes = atMost(minutes, CAPS.movie[2160], SIZE_CAP);
     } else if (p < 0.65) {
       // a near-copy of a 1080p remux, some of them H.264
+      const estimated = rand() < 0.3;
       row.originalBytes = between(11, 36) * GiB;
       row.packageBytes = row.originalBytes * between(0.9, 0.98);
-      row.findings = [finding.bitrate(mbitOf(row.packageBytes, minutes), CAPS.movie[1080], 1080, 'movie')];
+      const mbit = mbitOf(row.packageBytes, minutes);
+      const h264 = rand() < 0.5;
+      measures(row, { h: 1080, codec: h264 ? 'H.264' : 'HEVC', mbit, estimated, minutes });
+      row.findings = [finding.bitrate(mbit, CAPS.movie[1080], 1080, 'movie', estimated)];
       if (row.packageBytes > SIZE_CAP) row.findings.push(finding.size());
-      if (rand() < 0.5) row.findings.push(finding.hevc());
+      if (h264) row.findings.push(finding.hevc());
       row.estimatedBytes = atMost(minutes, CAPS.movie[1080], SIZE_CAP);
-    } else if (p < 0.77) {
-      row.originalBytes = between(9, 30) * GiB;
-      row.packageBytes = row.originalBytes * between(0.4, 0.8);
-      row.findings = [finding.surround()];
     } else if (p < 0.85) {
-      row.originalBytes = between(9, 30) * GiB;
-      row.packageBytes = row.originalBytes * between(0.4, 0.8);
-      row.findings = [finding.images(1 + Math.floor(rand() * 3))];
-      if (rand() < 0.4) row.findings.unshift(finding.surround());
+      // within the caps, the packager's tracks missing: stereo only, or the
+      // original's image subtitles
+      const h = rand() < 0.4 ? 2160 : 1080;
+      const mbit = round1(CAPS.movie[h] * between(0.5, 0.95));
+      row.originalBytes = bytesOf(mbit, minutes) * between(1.6, 3);
+      row.packageBytes = bytesOf(mbit, minutes) + 0.4 * GiB;
+      measures(row, { h, codec: 'HEVC', mbit, minutes });
+      if (p < 0.77) {
+        row.findings = [finding.surround()];
+        row.packageAudio = '2.0 AAC';
+      } else {
+        row.findings = [finding.images(1 + Math.floor(rand() * 3))];
+        if (rand() < 0.4) {
+          row.findings.unshift(finding.surround());
+          row.packageAudio = '2.0 AAC';
+        }
+      }
     } else if (p < 0.92) {
-      row.originalBytes = between(6, 16) * GiB;
-      row.packageBytes = row.originalBytes * between(0.85, 0.97);
+      // H.264 within the caps
+      const mbit = round1(CAPS.movie[1080] * between(0.5, 0.95));
+      row.originalBytes = bytesOf(mbit, minutes) * between(1.05, 1.2);
+      row.packageBytes = bytesOf(mbit, minutes) + 0.4 * GiB;
+      measures(row, { h: 1080, codec: 'H.264', mbit, minutes });
       row.findings = [finding.hevc()];
       row.estimatedBytes = row.packageBytes * between(0.5, 0.7);
-    } else if (p < 0.97) {
-      row.originalBytes = between(8, 60) * GiB;
-      row.findings = [finding.unpackaged()];
-      row.estimatedBytes = atMost(minutes, row.originalBytes > 30 * GiB ? CAPS.movie[2160] : CAPS.movie[1080], SIZE_CAP);
     } else {
-      row.originalBytes = between(8, 40) * GiB;
-      const failed = finding.failed();
-      row.findings = [failed.finding];
-      row.blocked = failed.blocked;
-      row.estimatedBytes = atMost(minutes, CAPS.movie[2160], SIZE_CAP);
+      // no package: the original's measures
+      const h = rand() < 0.5 ? 2160 : 1080;
+      row.originalBytes = between(8, 60) * GiB;
+      row.packageAudio = null;
+      measures(row, { h, codec: h === 2160 ? 'HEVC' : 'H.264', mbit: mbitOf(row.originalBytes, minutes), minutes });
+      if (p < 0.97) {
+        row.findings = [finding.unpackaged()];
+        row.estimatedBytes = atMost(minutes, CAPS.movie[h], SIZE_CAP);
+      } else {
+        const failed = finding.failed();
+        row.findings = [failed.finding];
+        row.blocked = failed.blocked;
+        row.estimatedBytes = atMost(minutes, CAPS.movie[h], SIZE_CAP);
+      }
     }
     return row;
   });
@@ -221,18 +269,26 @@ const SERIES = [
 function episodes() {
   const rows = [];
   for (const s of SERIES) {
+    // a series' episodes share their frame
+    const frame = FRAMES[s.uhd ? 2160 : 1080][0];
     for (let season = 1; season <= s.seasons; season++) {
       for (let episode = 1; episode <= s.episodes; episode++) {
         if (rand() < 0.2) continue; // within the rules
         const minutes = between(42, 58);
         const original = (s.uhd ? between(6, 13) : between(2.2, 6)) * GiB;
         const pkg = original * between(0.9, 0.98);
-        const cap = s.uhd ? CAPS.episode[2160] : CAPS.episode[1080];
+        const h = s.uhd ? 2160 : 1080;
+        const cap = CAPS.episode[h];
+        const mbit = mbitOf(pkg, minutes);
         const row = { itemId: `${s.id}e${season}${String(episode).padStart(2, '0')}`, title: `Chapter ${episode}`, year: null,
           kind: 'EPISODE', seriesId: s.id, seriesTitle: s.title, season, episode,
-          findings: [finding.bitrate(mbitOf(pkg, minutes), cap, s.uhd ? 2160 : 1080, 'episode')],
-          originalBytes: original, packageBytes: pkg, estimatedBytes: atMost(minutes, cap), queue: null };
-        if (!s.uhd && rand() < 0.3) row.findings.push(finding.surround());
+          findings: [finding.bitrate(mbit, cap, h, 'episode', false)],
+          originalBytes: original, packageBytes: pkg, estimatedBytes: atMost(minutes, cap), queue: null, packageAudio: PACKAGE_AUDIO };
+        measures(row, { h, codec: 'HEVC', mbit, minutes, frame });
+        if (!s.uhd && rand() < 0.3) {
+          row.findings.push(finding.surround());
+          row.packageAudio = '2.0 AAC';
+        }
         rows.push(row);
       }
     }
@@ -309,17 +365,30 @@ const nameOf = (r) =>
 
 const transcoderRules = new Set(['OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'VIDEO_NOT_HEVC']);
 
+// what processing a title again does to it, from the rules it breaks
+function outcomeOf(r) {
+  if (r.blocked) return 'BLOCKED';
+  const rules = new Set(r.findings.map((f) => f.rule));
+  if (rules.has('NOT_PACKAGED')) return 'FIRST_PACKAGE';
+  if ([...transcoderRules].some((x) => rules.has(x))) return 'REENCODE';
+  if (rules.has('PACKAGING_FAILED')) return r.packageBytes ? 'REPACKAGE' : 'FIRST_PACKAGE';
+  return 'REPACKAGE';
+}
+
 function titlesOf(scenario) {
   if (scenario === 'empty' || scenario === 'never') return [];
-  if (scenario !== 'unreported') return library;
-  // as a catalog whose transcoder never reported finds them: no caps checked
-  return library
-    .map((r) => ({ ...r, estimatedBytes: null, findings: r.findings.filter((f) => !transcoderRules.has(f.rule)) }))
-    .filter((r) => r.findings.length);
+  const rows =
+    scenario !== 'unreported'
+      ? library
+      : // as a catalog whose transcoder never reported finds them: no caps checked
+        library
+          .map((r) => ({ ...r, estimatedBytes: null, bitrateCap: null, sizeCap: null, findings: r.findings.filter((f) => !transcoderRules.has(f.rule)) }))
+          .filter((r) => r.findings.length);
+  return rows.map((r) => ({ ...r, outcome: outcomeOf(r) }));
 }
 
 // the titles of a kind and a search, the summary's; and of them those that
-// break a rule asked for, biggest package (then original) first
+// break a rule asked for
 function asked(vars, scenario) {
   const search = (vars.search ?? '').trim().toLowerCase();
   return titlesOf(scenario)
@@ -327,10 +396,32 @@ function asked(vars, scenario) {
     .filter((r) => !search || `${r.seriesTitle ?? ''} ${r.title}`.toLowerCase().includes(search));
 }
 function matchingOf(titles, vars) {
-  return titles
-    .filter((r) => !vars.rules?.length || r.findings.some((f) => vars.rules.includes(f.rule)))
-    .sort((a, b) => (b.packageBytes ?? 0) - (a.packageBytes ?? 0) || b.originalBytes - a.originalBytes);
+  return titles.filter((r) => !vars.rules?.length || r.findings.some((f) => vars.rules.includes(f.rule)));
 }
+
+// the report's orders: the package, the original, the saving (the package
+// less the most it takes after) and the bit rate, the biggest first; the
+// title from A; what isn't known last, either way
+const ORDER = {
+  PACKAGE_SIZE: (r) => r.packageBytes || null,
+  ORIGINAL_SIZE: (r) => r.originalBytes || null,
+  SAVING: (r) => (!r.blocked && r.packageBytes && r.estimatedBytes && r.packageBytes > r.estimatedBytes ? r.packageBytes - r.estimatedBytes : null),
+  VIDEO_BITRATE: (r) => r.videoBitrate || null,
+  TITLE: (r) => nameOf(r).toLowerCase(),
+};
+function sorted(rows, sort, descending) {
+  const key = ORDER[sort] ?? ORDER.PACKAGE_SIZE;
+  const dir = descending === false ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const x = key(a);
+    const y = key(b);
+    const c = x == null || y == null ? (x == null) - (y == null) : dir * (typeof x === 'string' ? x.localeCompare(y) : x - y);
+    return c || b.originalBytes - a.originalBytes || a.itemId.localeCompare(b.itemId);
+  });
+}
+
+// the titles the check looked at, of each kind, whatever their rules
+const CHECKED = { MOVIE: 1184, EPISODE: 3642 };
 
 function compliance(vars, scenario) {
   const evaluating = scenario === 'checking' || Date.now() < checkUntil;
@@ -353,7 +444,7 @@ function compliance(vars, scenario) {
       estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
     });
   }
-  const matching = matchingOf(titles, vars);
+  const matching = sorted(matchingOf(titles, vars), vars.sort, vars.descending);
   const offset = vars.after ? Number(String(vars.after).replace(/^o:/, '')) || 0 : 0;
   const first = Math.min(Math.max(vars.first ?? 100, 1), 500);
   const totals = (rows) => {
@@ -370,6 +461,7 @@ function compliance(vars, scenario) {
     notEvaluated,
     evaluatedAt: scenario === 'never' ? null : evaluatedAt,
     evaluating,
+    checkedTitles: scenario === 'never' ? 0 : vars.kind ? CHECKED[vars.kind] : CHECKED.MOVIE + CHECKED.EPISODE,
     total: matching.length,
     // the totals over every title that matches, not only the page, and over
     // those of them the queue would take: not in it, and none processing
@@ -507,6 +599,26 @@ function answer(query, vars, scenario) {
   return { data };
 }
 
+// the report as katalog-manager's CSV serves it: every title the filter
+// matches, in its order, a line each
+const CSV_COLUMNS = ['item_id', 'kind', 'title', 'year', 'series', 'season', 'episode', 'resolution', 'video_codec',
+  'video_bitrate_bps', 'bitrate_estimated', 'bitrate_cap_bps', 'original_bytes', 'package_bytes', 'estimated_bytes',
+  'package_audio', 'original_audio', 'rules', 'outcome', 'blocked_reason', 'queue', 'checked_at'];
+const cell = (v) => {
+  const s = v == null ? '' : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const whole = (n) => (n == null ? null : Math.round(n));
+function csvOf(rows) {
+  const lines = rows.map((r) =>
+    [r.itemId, r.kind, r.title, r.year, r.seriesTitle, r.season, r.episode, r.resolution, r.videoCodec, whole(r.videoBitrate),
+      r.videoBitrateEstimated, whole(r.bitrateCap), whole(r.originalBytes), whole(r.packageBytes), whole(r.estimatedBytes),
+      r.packageAudio, r.originalAudio, [...new Set(r.findings.map((f) => f.rule))].join(';'), r.outcome,
+      r.blocked ? BLOCKED[r.blocked].one : null, r.queue, r.evaluatedAt].map(cell).join(','),
+  );
+  return [CSV_COLUMNS.join(','), ...lines].join('\r\n') + '\r\n';
+}
+
 function cookie(req, name) {
   const m = (req.headers.cookie ?? '').match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return m ? decodeURIComponent(m[1]) : '';
@@ -521,6 +633,18 @@ createServer((req, res) => {
     res.write(': mock\n\n');
     const t = setInterval(() => res.write(': ping\n\n'), 15_000);
     req.on('close', () => clearInterval(t));
+    return;
+  }
+  if (path === '/api/manage/compliance.csv' && req.method === 'GET') {
+    if (scenario === 'down') {
+      res.writeHead(502).end('bad gateway');
+      return;
+    }
+    const q = new URL(req.url ?? '/', 'http://localhost').searchParams;
+    const vars = { kind: q.get('kind') || null, rules: q.get('rules') ? q.get('rules').split(',') : null, search: q.get('search') || null };
+    const rows = sorted(matchingOf(asked(vars, scenario), vars), q.get('sort') || 'PACKAGE_SIZE', q.get('descending') !== 'false');
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8' });
+    res.end(csvOf(rows));
     return;
   }
   if (path === '/api/manage/query' && req.method === 'POST') {
