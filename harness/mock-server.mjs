@@ -489,7 +489,9 @@ function compliance(vars, scenario) {
   return {
     rules,
     notEvaluated,
-    evaluatedAt: scenario === 'never' ? null : evaluatedAt,
+    // of the titles of the kind and search, as katalog-manager's: none when
+    // a search matches no title
+    evaluatedAt: scenario === 'never' || (vars.search?.trim() && !titles.length) ? null : evaluatedAt,
     evaluating,
     checkedTitles: scenario === 'never' ? 0 : vars.kind ? CHECKED[vars.kind] : CHECKED.MOVIE + CHECKED.EPISODE,
     total: matching.length,
