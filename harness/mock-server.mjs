@@ -600,10 +600,17 @@ function answer(query, vars, scenario) {
 }
 
 // the report as katalog-manager's CSV serves it: every title the filter
-// matches, in its order, a line each
+// matches, in its order, a line each, named by the kind and when the check
+// ran, in UTC
 const CSV_COLUMNS = ['item_id', 'kind', 'title', 'year', 'series', 'season', 'episode', 'resolution', 'video_codec',
-  'video_bitrate_bps', 'bitrate_estimated', 'bitrate_cap_bps', 'original_bytes', 'package_bytes', 'estimated_bytes',
-  'package_audio', 'original_audio', 'rules', 'outcome', 'blocked_reason', 'queue', 'checked_at'];
+  'video_bitrate_bps', 'bitrate_estimated', 'bitrate_cap_bps', 'size_cap_bytes', 'duration_s', 'original_bytes',
+  'package_bytes', 'estimated_bytes', 'package_audio', 'original_audio', 'rules', 'outcome', 'blocked_reason', 'queue',
+  'checked_at'];
+const csvName = (kind) => {
+  const what = kind === 'MOVIE' ? 'movies' : kind === 'EPISODE' ? 'episodes' : 'all';
+  const at = new Date(evaluatedAt).toISOString();
+  return `rules-${what}-${at.slice(0, 10)}T${at.slice(11, 13)}${at.slice(14, 16)}Z.csv`;
+};
 const cell = (v) => {
   const s = v == null ? '' : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -612,9 +619,10 @@ const whole = (n) => (n == null ? null : Math.round(n));
 function csvOf(rows) {
   const lines = rows.map((r) =>
     [r.itemId, r.kind, r.title, r.year, r.seriesTitle, r.season, r.episode, r.resolution, r.videoCodec, whole(r.videoBitrate),
-      r.videoBitrateEstimated, whole(r.bitrateCap), whole(r.originalBytes), whole(r.packageBytes), whole(r.estimatedBytes),
-      r.packageAudio, r.originalAudio, [...new Set(r.findings.map((f) => f.rule))].join(';'), r.outcome,
-      r.blocked ? BLOCKED[r.blocked].one : null, r.queue, r.evaluatedAt].map(cell).join(','),
+      r.videoBitrateEstimated, whole(r.bitrateCap), whole(r.sizeCap), r.durationSeconds, whole(r.originalBytes),
+      whole(r.packageBytes), whole(r.estimatedBytes), r.packageAudio, r.originalAudio,
+      [...new Set(r.findings.map((f) => f.rule))].join(';'), r.outcome, r.blocked ? BLOCKED[r.blocked].one : null, r.queue,
+      new Date(r.evaluatedAt).toISOString().replace(/\.\d+Z$/, 'Z')].map(cell).join(','),
   );
   return [CSV_COLUMNS.join(','), ...lines].join('\r\n') + '\r\n';
 }
@@ -643,7 +651,11 @@ createServer((req, res) => {
     const q = new URL(req.url ?? '/', 'http://localhost').searchParams;
     const vars = { kind: q.get('kind') || null, rules: q.get('rules') ? q.get('rules').split(',') : null, search: q.get('search') || null };
     const rows = sorted(matchingOf(asked(vars, scenario), vars), q.get('sort') || 'PACKAGE_SIZE', q.get('descending') !== 'false');
-    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8' });
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8; header=present',
+      'Content-Disposition': `attachment; filename=${csvName(vars.kind)}`,
+      'Cache-Control': 'no-store',
+    });
     res.end(csvOf(rows));
     return;
   }
