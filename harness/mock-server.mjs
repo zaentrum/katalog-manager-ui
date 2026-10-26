@@ -135,14 +135,16 @@ const finding = {
     limit: null,
     detail: null,
   }),
+  // what failed, and, where processing it again can't help, why (BLOCKED)
   failed: () => {
-    const [text, detail] = pick([
-      ['The transcoder failed.', 'ffmpeg exited 1'],
-      ['The packager failed, and tries again by itself.', 'shaka-packager exited 1'],
-      ['The transcoder left it as it is: Dolby Vision profile 7 needs a tone-mapping encode.', null],
-      ['The packager skipped it: the original has no video.', null],
+    const [text, detail, blocked] = pick([
+      ['The transcoder failed.', 'ffmpeg exited 1', null],
+      ['The packager failed, and tries again by itself.', 'shaka-packager exited 1', null],
+      ['The transcoder left it as it is: Dolby Vision profile 7 needs a tone-mapping encode.', null, 'dv7'],
+      ['The transcoder left it as it is: it can’t tone-map Dolby Vision profile 5.', null, 'dv5'],
+      ['The packager skipped it: the original has no video.', null, 'noVideo'],
     ]);
-    return { rule: 'PACKAGING_FAILED', text, measured: null, limit: null, detail };
+    return { finding: { rule: 'PACKAGING_FAILED', text, measured: null, limit: null, detail }, blocked };
   },
 };
 
@@ -200,7 +202,9 @@ function movies() {
       row.estimatedBytes = atMost(minutes, row.originalBytes > 30 * GiB ? CAPS.movie[2160] : CAPS.movie[1080], SIZE_CAP);
     } else {
       row.originalBytes = between(8, 40) * GiB;
-      row.findings = [finding.failed()];
+      const failed = finding.failed();
+      row.findings = [failed.finding];
+      row.blocked = failed.blocked;
       row.estimatedBytes = atMost(minutes, CAPS.movie[2160], SIZE_CAP);
     }
     return row;
@@ -236,11 +240,12 @@ function episodes() {
   return rows;
 }
 
-const library = [...movies(), ...episodes()].map((r) => ({ ...r, queueReason: null, queueDetail: null, blocked: null, evaluatedAt }));
+const library = [...movies(), ...episodes()].map((r) => ({ ...r, queueReason: null, queueDetail: null, blocked: r.blocked ?? null, evaluatedAt }));
 const byPackage = library.filter((r) => r.kind === 'MOVIE' && r.packageBytes).sort((a, b) => b.packageBytes - a.packageBytes);
 
-// why the queue doesn't take a title, as the server says it: of one title,
-// of all of them, and of some among others
+// why processing a title again can't help, so the queue doesn't take it,
+// as the server says it: of one title (its reworkBlocked, a clause), of all
+// of them, and of some among others
 const BLOCKED = {
   deleted: {
     one: 'its original was deleted after packaging',
@@ -249,15 +254,26 @@ const BLOCKED = {
   },
   noFile: { one: 'it has no file', all: 'they have no file', some: (n) => `${fmt(n)} ${n === 1 ? 'has' : 'have'} no file` },
   disc: { one: 'its file is a disc image', all: 'their files are disc images', some: (n) => (n === 1 ? '1 is a disc image' : `${fmt(n)} are disc images`) },
+  noVideo: { one: 'its original has no video', all: 'their originals have no video', some: (n) => `${fmt(n)} ${n === 1 ? 'has' : 'have'} no video` },
+  dv7: {
+    one: 'its video is Dolby Vision profile 7, which needs a tone-mapping encode',
+    all: 'their video is Dolby Vision profile 7, which needs a tone-mapping encode',
+    some: (n) => `${fmt(n)} ${n === 1 ? 'is' : 'are'} Dolby Vision profile 7`,
+  },
+  dv5: {
+    one: 'its video is Dolby Vision profile 5, which the transcoder can’t tone-map',
+    all: 'their video is Dolby Vision profile 5, which the transcoder can’t tone-map',
+    some: (n) => `${fmt(n)} ${n === 1 ? 'is' : 'are'} Dolby Vision profile 5`,
+  },
   unknown: { one: 'it is not in the catalog', all: 'they are not in the catalog', some: (n) => `${fmt(n)} ${n === 1 ? 'is' : 'are'} not in the catalog` },
 };
-// a few movies the queue doesn't take (the second biggest package among
-// them, so the list shows one at the top), one of them a disc image whose
-// packaging failed
+// a few movies the queue doesn't take besides those whose packaging was
+// refused (the second biggest package among them, so the list shows one at
+// the top), one of them a disc image whose packaging failed
 byPackage[1].blocked = 'deleted';
 byPackage[6].blocked = 'deleted';
 byPackage[15].blocked = 'noFile';
-const disc = library.find((r) => r.kind === 'MOVIE' && r.findings.some((f) => f.rule === 'PACKAGING_FAILED'));
+const disc = library.find((r) => r.kind === 'MOVIE' && !r.blocked && r.findings.some((f) => f.rule === 'PACKAGING_FAILED'));
 if (disc) {
   disc.blocked = 'disc';
   disc.findings = [{ rule: 'PACKAGING_FAILED', text: 'Its file is a disc image, which the transcoder doesn’t encode.', measured: null, limit: null, detail: null }];
@@ -279,6 +295,11 @@ for (const [i, q, why] of [
 // under details
 const h264 = byPackage.find((r) => !r.queue && !r.blocked && r.findings.some((f) => f.rule === 'VIDEO_NOT_HEVC'));
 Object.assign(h264, { queue: 'failed', queueReason: 'The transcoder failed.', queueDetail: 'ffmpeg exited 1' });
+// a title processing again can't help says why, and has no estimate
+for (const r of library) {
+  r.reworkBlocked = r.blocked ? BLOCKED[r.blocked].one : null;
+  if (r.blocked) r.estimatedBytes = null;
+}
 
 // a title as the server names it in its answers
 const nameOf = (r) =>
