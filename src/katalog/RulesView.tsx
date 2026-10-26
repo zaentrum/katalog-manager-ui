@@ -43,6 +43,7 @@ import {
   countText,
   csvFileName,
   csvUrl,
+  dispositionName,
   emptyState,
   filterKey,
   filterVariables,
@@ -77,6 +78,7 @@ import {
   select,
   selectedCount,
   selectionText,
+  signedSizeText,
   sizeCapOf,
   sizeText,
   staleText,
@@ -250,22 +252,22 @@ function useBarHeight(): number {
 }
 
 // useDownload fetches a file katalog-manager serves behind its auth and
-// saves it under name: a link can't send the Authorization header, so the
-// bytes are fetched like every other API call and handed to the browser as
-// a blob.
+// saves it under the name katalog-manager gives it, else fallback: a link
+// can't send the Authorization header, so the bytes are fetched like every
+// other API call and handed to the browser as a blob.
 function useDownload() {
   const auth = useAuth();
   // read the token at fetch time: a silent renew must not change the function
   const token = useRef(auth.user?.access_token);
   token.current = auth.user?.access_token;
-  return useCallback(async (url: string, name: string) => {
+  return useCallback(async (url: string, fallback: string) => {
     const bearer = token.current;
     const res = await fetch(url, { headers: bearer ? { Authorization: `Bearer ${bearer}` } : {} });
     if (!res.ok) throw new Error(`katalog-manager ${res.status}`);
     const href = URL.createObjectURL(await res.blob());
     const a = document.createElement('a');
     a.href = href;
-    a.download = name;
+    a.download = dispositionName(res.headers.get('Content-Disposition')) ?? fallback;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -571,7 +573,7 @@ export function RulesView() {
       align: 'right',
       sort: 'SAVING',
       sortTitle: 'package − at most after',
-      render: (r) => num(isBlocked(r) ? '—' : sizeText(savingBytes(r))),
+      render: (r) => num(isBlocked(r) ? '—' : signedSizeText(savingBytes(r))),
     },
     {
       key: 'audio',

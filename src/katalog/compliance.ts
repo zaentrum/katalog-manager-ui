@@ -344,11 +344,19 @@ export function audioLines(audio: string | null | undefined): string[] {
 }
 
 /** What processing a title again frees at least: its package less the most
- *  it is to take after; null when that isn't known, or frees nothing. */
+ *  it is to take after, as katalog-manager sorts by it; less than nothing
+ *  where the package may grow (H.264 re-encoded up to the cap, a track
+ *  added); null when either isn't known. */
 export function savingBytes(r: Pick<ComplianceRow, 'packageBytes' | 'estimatedBytes'>): number | null {
   if (r.packageBytes == null || r.estimatedBytes == null || r.packageBytes <= 0 || r.estimatedBytes <= 0) return null;
-  const saving = r.packageBytes - r.estimatedBytes;
-  return saving > 0 ? saving : null;
+  return r.packageBytes - r.estimatedBytes;
+}
+
+/** A size that may be less than nothing, with its sign: "64.6 GB",
+ *  "−1.5 GB"; '—' for none. */
+export function signedSizeText(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return n < 0 ? `−${fmtBytes(-n)}` : fmtBytes(n);
 }
 
 /** rows, then those of more not among them (a page loaded after). */
@@ -775,14 +783,34 @@ export function csvUrl(f: ComplianceFilter, o: ComplianceOrder): string {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** The CSV's file name: the kind and when the check ran, in the browser's
- *  time, "rules-movies-2026-10-26T1343.csv"; the time of the download when
- *  the check's is not known. */
+/** The CSV's file name, as katalog-manager names it, for a response that
+ *  doesn't: the kind and when the check ran, in UTC,
+ *  "rules-movies-2026-10-26T1343Z.csv"; the time of the download when the
+ *  check's is not known. */
 export function csvFileName(kind: ComplianceKind | '', checkedAt: string | null, now: Date = new Date()): string {
   const what = KIND_OPTIONS.find((k) => k.value === kind)?.label ?? 'all';
   const at = checkedAt && !Number.isNaN(Date.parse(checkedAt)) ? new Date(checkedAt) : now;
-  const stamp = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}${pad(at.getMinutes())}`;
+  const stamp = `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}T${pad(at.getUTCHours())}${pad(at.getUTCMinutes())}Z`;
   return `rules-${what}-${stamp}.csv`;
+}
+
+/** The file name a response's Content-Disposition gives: filename*
+ *  (percent-encoded) first, then filename, quoted or not; only a name,
+ *  never a path. Null for none. */
+export function dispositionName(header: string | null | undefined): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*[^']*'[^']*'([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      const name = decodeURIComponent(star[1].trim());
+      if (name) return name.split(/[\\/]/).pop() || null;
+    } catch {
+      /* a broken encoding: the plain name, if there is one */
+    }
+  }
+  const plain = /filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i.exec(header);
+  const name = plain ? (plain[1] ?? plain[2]).replace(/\\(.)/g, '$1').trim() : '';
+  return name ? name.split(/[\\/]/).pop() || null : null;
 }
 
 /** The check's line under the tab's heading, after when it ran: how many

@@ -21,6 +21,7 @@ import {
   csvFileName,
   csvQuery,
   csvUrl,
+  dispositionName,
   emptyState,
   filterKey,
   filterVariables,
@@ -61,6 +62,7 @@ import {
   select,
   selectedCount,
   selectionText,
+  signedSizeText,
   sizeCapOf,
   sizeText,
   staleText,
@@ -211,7 +213,12 @@ test('the measures in figures: bit rates in Mbit/s, an estimated one marked, the
   assert.equal(savingBytes(row({})), 47 * GB);
   assert.equal(savingBytes(row({ estimatedBytes: null })), null);
   assert.equal(savingBytes(row({ packageBytes: null })), null);
-  assert.equal(savingBytes(row({ packageBytes: 10 * GB, estimatedBytes: 12 * GB })), null);
+  // a package that may grow, as katalog-manager sorts it: less than nothing, with its sign
+  assert.equal(savingBytes(row({ packageBytes: 4.6 * GB, estimatedBytes: 6.144 * GB })), 4.6 * GB - 6.144 * GB);
+  assert.equal(signedSizeText(4.6 * GB - 6.144 * GB), `−1.5${NB}GB`);
+  assert.equal(signedSizeText(64.6 * GB), `64.6${NB}GB`);
+  assert.equal(signedSizeText(0), `0${NB}MB`);
+  assert.equal(signedSizeText(null), '—');
 });
 
 test('a finding in words for the row’s details: katalog-manager’s sentence, else what was measured against the limit', () => {
@@ -568,13 +575,24 @@ test('the CSV asks for the filter and the order the table shows, and is named by
     'rules=OVER_SIZE_CAP%2CNO_SURROUND&search=pine&sort=TITLE&descending=false',
   );
   assert.equal(csvUrl(DEFAULT_FILTER, DEFAULT_ORDER), '/api/manage/compliance.csv?kind=MOVIE&sort=PACKAGE_SIZE&descending=true');
-  // in the browser's time, as the page shows it
-  const at = new Date(2026, 9, 26, 13, 43, 9);
-  assert.equal(csvFileName('MOVIE', at.toISOString()), 'rules-movies-2026-10-26T1343.csv');
-  assert.equal(csvFileName('EPISODE', at.toISOString()), 'rules-episodes-2026-10-26T1343.csv');
-  assert.equal(csvFileName('', at.toISOString()), 'rules-all-2026-10-26T1343.csv');
+  // as katalog-manager names it, in UTC, for a response that doesn't
+  assert.equal(csvFileName('MOVIE', '2026-10-26T13:43:09Z'), 'rules-movies-2026-10-26T1343Z.csv');
+  assert.equal(csvFileName('EPISODE', '2026-10-26T13:43:09Z'), 'rules-episodes-2026-10-26T1343Z.csv');
+  assert.equal(csvFileName('', '2026-10-26T13:43:09Z'), 'rules-all-2026-10-26T1343Z.csv');
   // never checked: the time of the download
-  assert.equal(csvFileName('MOVIE', null, new Date(2026, 0, 2, 3, 4)), 'rules-movies-2026-01-02T0304.csv');
+  assert.equal(csvFileName('MOVIE', null, new Date(Date.UTC(2026, 0, 2, 3, 4))), 'rules-movies-2026-01-02T0304Z.csv');
+});
+
+test('the name the server gives a download, as Content-Disposition writes it', () => {
+  assert.equal(dispositionName('attachment; filename=rules-movies-2026-10-26T1412Z.csv'), 'rules-movies-2026-10-26T1412Z.csv');
+  assert.equal(dispositionName('attachment; filename="rules all.csv"'), 'rules all.csv');
+  assert.equal(dispositionName('attachment; filename="a \\"b\\".csv"'), 'a "b".csv');
+  assert.equal(dispositionName("attachment; filename*=utf-8''r%C3%A8gles.csv"), 'règles.csv');
+  assert.equal(dispositionName("attachment; filename*=utf-8''%E0%A4%A; filename=plain.csv"), 'plain.csv');
+  // only a name, never a path
+  assert.equal(dispositionName('attachment; filename="../../etc/rules.csv"'), 'rules.csv');
+  assert.equal(dispositionName('attachment'), null);
+  assert.equal(dispositionName(null), null);
 });
 
 test('the check’s line counts the titles it checked and those that break a rule, as far as they are known', () => {
