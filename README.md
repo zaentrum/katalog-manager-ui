@@ -68,23 +68,28 @@ with its package at most after ("Re-encoded, then packaged again, at most
 11.8 GB"); the size of its original and of its package today; and its
 status with the queue's reason, what the title waits for or why it failed.
 The technical part of a finding or of the queue's reason, a codec's id or a
-tool's output, is under the row's details, never in its lines.
+tool's output, is under the row's details, never in its lines. A title that
+processing again can't help (`reworkBlocked`) is promised nothing: in place
+of the outcome it says why ("Can’t be processed again: its file is a disc
+image."), with no estimate.
 
 A title is processed again from its row (**process again**), several by
 ticking them, or every title that matches: the header checkbox ticks the
-rows on the screen, and the toolbar then offers to select all that match
-and that the queue would take (`queueable`), with their count. A
-filter change keeps the rows ticked and counts those it hides; a selection
-of every match goes with its filter. A title the queue holds, queued or
-processing, can't be ticked. One confirm asks first, the same for one title
+rows on the screen, and the toolbar then offers to select all that match and
+that the queue would take (`queueable`), with their count. A filter change
+keeps the rows ticked and counts those it hides; a selection of every match
+goes with its filter. A title the queue holds, queued or processing, or that
+processing again can't help, can't be ticked or processed again, and every
+way of selecting leaves it out; its checkbox and its button stay in the row,
+off, their names saying why. One confirm asks first, the same for one title
 and many, titled with the button's words ("process 12 titles again"): each
-title is processed again from its original with today's settings, one
-after another; its current version plays until the new one is ready; the
-original isn't changed; and their packages now and at most after, every
-match's from the report's totals. The titles go to the re-encode queue
-with `queueRework`, or every match with `queueReworkMatching` and the
-filter. What happened is said in katalog-manager's words: a toast of the
-titles queued (`queuedText`), a plain one of those the queue held already
+title is processed again from its original with today's settings, one after
+another; its current version plays until the new one is ready; the original
+isn't changed; and their packages now and at most after, every match's from
+the report's totals. The titles go to the re-encode queue with
+`queueRework`, or every match with `queueReworkMatching` and the filter.
+What happened is said in katalog-manager's words: a toast of the titles
+queued (`queuedText`), a plain one of those the queue held already
 (`alreadyText`), and a warning banner of the titles it didn't take, or that
 nothing was queued at all (`notQueuedText`), each title with its reason
 under details (`skippedTitles`). A title processed again that follows the
@@ -95,12 +100,12 @@ one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
 1,000 GB.
 
 It needs a katalog-manager with `libraryCompliance` (with `matching`,
-`queueable`, `queue`, the rows' `queueReason` and `queueDetail`, and the
-`detail` of each finding and of each rule), `queueRework` and
-`queueReworkMatching` (with `skippedTitles`, `queuedText`, `alreadyText`
-and `notQueuedText`) and `refreshCompliance`: against an older one the tab
-says that the catalog service on the server has no rules check, and the
-rest of the console works.
+`queueable`, `queue`, the rows' `queueReason`, `queueDetail` and
+`reworkBlocked`, and the `detail` of each finding and of each rule),
+`queueRework` and `queueReworkMatching` (with `skippedTitles`, `queuedText`,
+`alreadyText` and `notQueuedText`) and `refreshCompliance`: against an older
+one the tab says that the catalog service on the server has no rules check,
+and the rest of the console works.
 
 ## Track languages
 
