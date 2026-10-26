@@ -107,19 +107,21 @@ as they are set (`inflight`, `window`); its current version plays until the
 new one is ready; and the original isn't changed, or, where `originals`
 deletes it once the new version is complete, the confirm says it can't be
 brought back and its button is the danger one. Its facts are the packages
-now and about after, every match's from the report's totals, and how many
-titles have no estimate (`withoutEstimate`): "5.9 TB now, about 1.3 TB
-after; 3 titles have no estimate". The titles go to the re-encode queue with
-`queueRework`, or every match with `queueReworkMatching`, the filter, and
-the number and the set of the titles the confirm named (`expected`, the
-queueable set's `fingerprint`): katalog-manager queues none when the filter
-matches others by then, and the tab says so, reads the list again and offers
-every match as it is now. What happened is said in katalog-manager's words:
-a toast of the titles queued (`queuedText`), a plain one of those the queue
-held already (`alreadyText`), and a warning banner of the titles it didn't
-take, or that nothing was queued at all (`notQueuedText`), each title with
-its reason under details (`skippedTitles`). A title processed again that
-follows the rules leaves the list and counts as processed again.
+now and about after, over the same titles, those with an estimate (a
+selection's as the report's totals are, every match's from those totals),
+and how many titles have no estimate (`withoutEstimate`): "5.9 TB now, about
+1.3 TB after; 3 titles have no estimate". The titles go to the re-encode
+queue with `queueRework`, or every match with `queueReworkMatching`, the
+filter, and the number and the set of the titles the confirm named
+(`expected`, the queueable set's `fingerprint`): katalog-manager queues none
+when the filter matches others by then, and the tab says so, reads the list
+again and offers every match as it is now. What happened is said in
+katalog-manager's words: a toast of the titles queued (`queuedText`), a
+plain one of those the queue held already (`alreadyText`), and a warning
+banner of the titles it didn't take, or that nothing was queued at all
+(`notQueuedText`), each title with its reason under details
+(`skippedTitles`). A title processed again that follows the rules leaves the
+list and counts as processed again.
 
 Sizes are written as chino's downloads write them: decimal units, GB with
 one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
