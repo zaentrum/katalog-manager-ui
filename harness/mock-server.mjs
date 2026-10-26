@@ -10,6 +10,8 @@
 //   never       the titles were never checked
 //   checking    a check is running
 //   unreported  the transcoder never reported its rules: its caps are not checked
+//   unreported-packager  the packager never reported: surround and image subtitles are not checked
+//   unreported-both      neither worker reported
 //   old         a katalog-manager without the report: graph-gophers' validation errors
 //   down        katalog-manager answers 502
 //   delete      library.originals deletes an original once its new version is complete
@@ -365,6 +367,18 @@ const nameOf = (r) =>
     : `${r.title} (${r.year})`;
 
 const transcoderRules = new Set(['OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'VIDEO_NOT_HEVC']);
+const packagerRules = new Set(['NO_SURROUND', 'IMAGE_SUBTITLES_MISSING']);
+// every rule, as the summary lists them
+const RULES = ['NOT_PACKAGED', 'PACKAGING_FAILED', 'OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING', 'VIDEO_NOT_HEVC'];
+
+// the workers that never reported, by scenario, and the rules that leaves
+// unchecked: no title breaks them, and the summary says they aren't
+// evaluated
+const UNREPORTED = { unreported: ['transcoder'], 'unreported-packager': ['packager'], 'unreported-both': ['transcoder', 'packager'] };
+const silent = (scenario, worker) => (UNREPORTED[scenario] ?? []).includes(worker);
+function unchecked(scenario) {
+  return new Set([...(silent(scenario, 'transcoder') ? transcoderRules : []), ...(silent(scenario, 'packager') ? packagerRules : [])]);
+}
 
 // what processing a title again does to it, from the rules it breaks
 function outcomeOf(r) {
@@ -378,13 +392,18 @@ function outcomeOf(r) {
 
 function titlesOf(scenario) {
   if (scenario === 'empty' || scenario === 'never') return [];
-  const rows =
-    scenario !== 'unreported'
-      ? library
-      : // as a catalog whose transcoder never reported finds them: no caps checked
-        library
-          .map((r) => ({ ...r, estimatedBytes: null, bitrateCap: null, sizeCap: null, findings: r.findings.filter((f) => !transcoderRules.has(f.rule)) }))
-          .filter((r) => r.findings.length);
+  const off = unchecked(scenario);
+  const rows = !off.size
+    ? library
+    : // as a catalog finds them while a worker hasn't reported: none of its
+      // rules checked, and without the transcoder's, no caps and no estimate
+      library
+        .map((r) => ({
+          ...r,
+          ...(silent(scenario, 'transcoder') ? { estimatedBytes: null, bitrateCap: null, sizeCap: null } : {}),
+          findings: r.findings.filter((f) => !off.has(f.rule)),
+        }))
+        .filter((r) => r.findings.length);
   return rows.map((r) => ({ ...r, outcome: outcomeOf(r) }));
 }
 
@@ -427,26 +446,30 @@ const CHECKED = { MOVIE: 1184, EPISODE: 3642 };
 function compliance(vars, scenario) {
   const evaluating = scenario === 'checking' || Date.now() < checkUntil;
   const rules = {
-    transcoder: scenario === 'unreported' ? null : { ...TRANSCODER, reportedAt: reportedAt.transcoder },
-    packager: { ...PACKAGER, reportedAt: reportedAt.packager },
+    transcoder: silent(scenario, 'transcoder') ? null : { ...TRANSCODER, reportedAt: reportedAt.transcoder },
+    packager: silent(scenario, 'packager') ? null : { ...PACKAGER, reportedAt: reportedAt.packager },
   };
-  const notEvaluated =
-    scenario === 'unreported' ? ['The transcoder hasn’t reported its rules, so bit rates, file sizes and the video format can’t be checked.'] : [];
+  const notEvaluated = [
+    ...(silent(scenario, 'transcoder') ? ['The transcoder hasn’t reported its rules, so bit rates, file sizes and the video format can’t be checked.'] : []),
+    ...(silent(scenario, 'packager') ? ['The packager hasn’t reported what it keeps, so surround and image subtitles can’t be checked.'] : []),
+  ];
   const titles = asked(vars, scenario);
-  const summary = [];
-  for (const rule of ['NOT_PACKAGED', 'PACKAGING_FAILED', 'OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING', 'VIDEO_NOT_HEVC']) {
+  // every rule, as katalog-manager lists them, those no title breaks with 0;
+  // a rule of a worker that never reported isn't evaluated
+  const off = unchecked(scenario);
+  const summary = RULES.map((rule) => {
     const of = titles.filter((r) => r.findings.some((f) => f.rule === rule));
-    if (!of.length) continue;
     // now and after over the same titles, those with an estimate
     const estimated = of.filter((r) => r.estimatedBytes != null);
-    summary.push({
+    return {
       rule,
       titles: of.length,
       packageBytes: estimated.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
       estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
       withoutEstimate: of.length - estimated.length,
-    });
-  }
+      evaluated: !off.has(rule),
+    };
+  });
   const matching = sorted(matchingOf(titles, vars), vars.sort, vars.descending);
   const offset = vars.after ? Number(String(vars.after).replace(/^o:/, '')) || 0 : 0;
   const first = Math.min(Math.max(vars.first ?? 100, 1), 500);
