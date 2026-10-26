@@ -628,6 +628,9 @@ function answer(query, vars, scenario) {
       };
     }
     data.libraryCompliance = compliance(vars, scenario);
+    // beside it, while the filter names a rule, the report of every rule's
+    // titles, the summary's
+    if (vars.everyRule) data.everyRule = compliance({ ...vars, rules: null, first: 0 }, scenario);
   }
   if (/\bsettings\b/.test(query)) data.settings = SETTINGS;
   if (/\bretryPolicy\b/.test(query)) data.retryPolicy = POLICY;
