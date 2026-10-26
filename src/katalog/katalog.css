@@ -362,14 +362,32 @@ a.kat__rowlink:focus-visible {
   font-size: 12px;
 }
 
-/* the rules tab: what each worker reported of its rules and when the titles
-   were checked; the summary's rules, each a button that lists its titles;
-   the rule filter; a title's findings; the selection and what a rework
-   queued, kept in view at the bottom while the list scrolls */
-.kat__rules {
+/* the rules tab, a worklist: its header and the workers' rules, the
+   banners about the list as a whole, the summary by rule and the queue's
+   counts, the filter bar, the selection toolbar that stays in view under the
+   top bar, the rows' findings, outcomes and statuses, what takes the table's
+   place when it is empty, and the toasts at the bottom of the screen */
+.kat__rules > * + * {
+  margin-top: 16px;
+}
+.kat__wl-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kat__h3 {
+  margin: 0;
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg, #e6e6e6);
+  text-transform: lowercase;
+}
+.kat__rules-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin-bottom: 0;
 }
 .kat__workers {
   display: grid;
@@ -388,14 +406,8 @@ a.kat__rowlink:focus-visible {
   align-items: baseline;
   gap: 4px 10px;
 }
-.kat__worker-head h2 {
-  margin: 0;
-}
 .kat__worker-head .kat__mono {
   font-size: 12px;
-}
-.kat__rules .kat__err {
-  padding: 0;
 }
 .kat__checked {
   display: flex;
@@ -405,11 +417,65 @@ a.kat__rowlink:focus-visible {
   padding-top: 10px;
   border-top: 1px solid var(--border, #1f2633);
 }
-.kat__summary {
-  margin-bottom: 20px;
+
+/* a banner: about the list as a whole, a bar in its state's colour */
+.kat__banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-2, #2a3142);
+  border-left: 3px solid var(--signal-amber, #f2b233);
+  background: var(--surface, #11161f);
+  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-2, #c9d1d9);
 }
-.kat__counting {
-  padding: 0;
+.kat__banner--error {
+  border-left-color: var(--signal-red, #f85149);
+}
+.kat__banner-glyph {
+  flex: none;
+  margin-top: 2px;
+  color: var(--signal-amber, #f2b233);
+}
+.kat__banner--error .kat__banner-glyph {
+  color: var(--signal-red, #f85149);
+}
+.kat__banner-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kat__details summary {
+  cursor: pointer;
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  color: var(--fg-muted, #aeb8c2);
+}
+.kat__details summary:focus-visible {
+  outline: 2px solid var(--cloud-cyan, #00a4dc);
+  outline-offset: 2px;
+}
+.kat__details code {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  color: var(--fg-dim, #6e7787);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* the summary: titles and packages by rule, each rule a button that lists
+   its titles alone; the queue in numbers and words */
+.kat__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .kat__rulebtn {
   padding: 0;
@@ -432,9 +498,39 @@ a.kat__rowlink:focus-visible {
   outline: 2px solid var(--cloud-cyan, #00a4dc);
   outline-offset: 2px;
 }
+.kat__queue {
+  margin: 0;
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 13px;
+  color: var(--fg-2, #c9d1d9);
+}
+.kat__queue-label {
+  margin-right: 10px;
+  font-weight: 600;
+  color: var(--fg, #e6e6e6);
+}
+.kat__count--blue {
+  color: var(--cloud-blue, #58a6ff);
+  font-weight: 600;
+}
+.kat__count--amber {
+  color: var(--signal-amber, #f2b233);
+  font-weight: 600;
+}
+
+/* the filter bar: a search, the kind, the rules, the count and clear all */
+.kat__filterbar .kat__filters {
+  margin-bottom: 10px;
+}
+.kat__count {
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted, #aeb8c2);
+}
 .kat__rulepick {
   min-width: 0;
-  margin: 0 0 16px;
+  margin: 0;
   padding: 0;
   border: 0;
 }
@@ -451,15 +547,87 @@ a.kat__rowlink:focus-visible {
   flex-wrap: wrap;
   gap: 8px 18px;
 }
+
+/* the selection toolbar: what the list holds, or the selection, its count
+   in blue, and its one action; it stays in view under the top bar */
+.kat__seltool {
+  position: sticky;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border: 1px solid var(--border, #1f2633);
+  background: var(--bg-2, #0d1117);
+}
+.kat__seltool:focus-visible {
+  outline: 2px solid var(--cloud-cyan, #00a4dc);
+  outline-offset: -2px;
+}
+.kat__seltool--on {
+  border-color: var(--cloud-blue, #58a6ff);
+  box-shadow: inset 3px 0 0 var(--cloud-blue, #58a6ff);
+  background: color-mix(in srgb, var(--cloud-blue, #58a6ff) 8%, var(--bg-2, #0d1117));
+}
+.kat__seltool-heading,
+.kat__seltool-count {
+  font-family: var(--ff-mono, 'JetBrains Mono', monospace);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.kat__seltool-count {
+  color: var(--cloud-blue, #58a6ff);
+}
+.kat__seltool + .nc-table__scroll {
+  border-top: 0;
+}
+/* read out, not shown */
+.kat__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* a row: its findings in the body face with what processing again does,
+   its status with the detail under it */
 .kat__findings {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 220px;
+  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.kat__findings ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.kat__outcome {
   font-size: 12px;
+  color: var(--fg-muted, #aeb8c2);
+}
+.kat__status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.kat__status-detail {
+  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
+  font-size: 12px;
+  color: var(--fg-muted, #aeb8c2);
 }
 .kat__cell-title {
   display: inline-block;
@@ -472,28 +640,74 @@ a.kat__rowlink:focus-visible {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 10px;
 }
-.kat__dock {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
+
+/* in the table's place: which kind of empty, and at most one way forward */
+.kat__empty {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 10px 0 12px;
-  background: var(--bg, #0b0f19);
+  align-items: flex-start;
+  gap: 6px;
+  padding: 20px 0;
 }
-.kat__dock .kat__notice {
+
+/* the confirm: its sentence, then the facts */
+.kat__confirm-body {
   margin: 0;
 }
-.kat__bulk {
+.kat__kv.kat__confirm-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+/* the toasts: at the bottom of the screen, in the middle, above the page */
+.kat__toaster {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 200;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.kat__toasts {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 8px 12px;
-  padding: 10px 14px;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kat__toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 8px 12px;
   border: 1px solid var(--border-2, #2a3142);
-  background: var(--surface, #11161f);
+  border-left: 3px solid var(--fg-dim, #6e7787);
+  background: var(--surface-2, #161b26);
+  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg, #e6e6e6);
+  pointer-events: auto;
+  animation: kat-toast-in 160ms ease-out;
+}
+.kat__toast--success {
+  border-left-color: var(--signal-green, #2ea043);
+}
+.kat__toast--success svg {
+  color: var(--signal-green, #2ea043);
+}
+@keyframes kat-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kat__toast {
+    animation: none;
+  }
 }

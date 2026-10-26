@@ -1,8 +1,8 @@
 // Pure helpers for the rules tab: the titles that break the rules the
-// pipeline's workers report, and their rework through the re-encode queue.
-// No React, no DOM, so `npm test` runs them under node as they are.
-import { failedTitle, timeoutText } from './processing.ts';
-import { meanwhileText } from './reencode.ts';
+// transcoder and the packager report, and processing them again through the
+// re-encode queue. No React, no DOM, so `npm test` runs them under node as
+// they are.
+import { ago, failedTitle } from './processing.ts';
 
 // ---- katalog-manager's libraryCompliance, as it answers it
 
@@ -63,12 +63,27 @@ export interface ComplianceSummary {
   packageBytes: number;
   estimatedBytes: number | null;
 }
+/** The totals over every title that matches the filter, not only a page. */
+export interface ComplianceTotals {
+  titles: number;
+  originalBytes: number;
+  packageBytes: number;
+  estimatedBytes: number | null;
+}
+/** The re-encode queue's titles by state, all of them. */
+export interface ComplianceQueueCounts {
+  queued: number;
+  processing: number;
+  processed: number;
+  failed: number;
+}
 export interface ComplianceReport {
   rules: PipelineRules;
   notEvaluated: string[];
   evaluatedAt: string | null; // the oldest evaluation in the report; null when never evaluated
   evaluating: boolean;
-  total: number; // the titles that match the filter, over every page
+  matching: ComplianceTotals;
+  queue: ComplianceQueueCounts;
   summary: ComplianceSummary[];
   rows: ComplianceRow[]; // the titles that break a rule, biggest package (then original) first
   nextCursor: string | null;
@@ -79,6 +94,24 @@ export interface ComplianceQueued {
   alreadyQueued: number;
   skipped: number;
   message: string;
+}
+
+// ---- words and numbers
+
+/** A count with thousands separators: "2,500". */
+export function fmtCount(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+/** s with its first letter in capitals: the body face's sentence case. */
+export function sentenceCase(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** The titles of a kind, counted: "1 movie", "230 movies", "12 titles". */
+export function titlesOf(kind: ComplianceKind | '', n: number): string {
+  const [one, many] = kind === 'MOVIE' ? ['movie', 'movies'] : kind === 'EPISODE' ? ['episode', 'episodes'] : ['title', 'titles'];
+  return `${fmtCount(n)} ${n === 1 ? one : many}`;
 }
 
 // ---- the rules
@@ -105,10 +138,16 @@ const RULE_LABELS: Record<ComplianceRule, string> = {
   IMAGE_SUBTITLES_MISSING: 'image subtitles missing',
 };
 
-/** What a title breaking the rule is, in a few words; a rule the console
- *  does not know reads as its name. */
+/** What a title breaking the rule is, in a few words, in the monospace
+ *  voice; a rule the console does not know reads as its name. */
 export function ruleLabel(rule: string): string {
   return RULE_LABELS[rule as ComplianceRule] ?? rule.toLowerCase().replace(/_/g, ' ');
+}
+
+/** A rule as the rule filter offers it, in the body face: "Over the bitrate
+ *  cap". */
+export function ruleOption(rule: string): string {
+  return sentenceCase(ruleLabel(rule));
 }
 
 /** xs in RULE_ORDER; a rule the console does not know comes after, by name. */
@@ -130,12 +169,14 @@ export interface ComplianceFilter {
 }
 
 export const DEFAULT_FILTER: ComplianceFilter = { kind: 'MOVIE', rules: [], search: '' };
+/** The filter once "clear all" has cleared it: every kind, rule and title. */
+export const CLEARED_FILTER: ComplianceFilter = { kind: '', rules: [], search: '' };
 
-/** The choices of the type filter. */
+/** The choices of the kind filter, the one that filters nothing first. */
 export const KIND_OPTIONS: { label: string; value: ComplianceKind | '' }[] = [
+  { label: 'all', value: '' },
   { label: 'movies', value: 'MOVIE' },
   { label: 'episodes', value: 'EPISODE' },
-  { label: 'all', value: '' },
 ];
 
 /** The filter as libraryCompliance and queueReworkMatching take it. */
@@ -151,10 +192,23 @@ export function filterVariables(f: ComplianceFilter): {
   };
 }
 
-/** The same for two filters that ask for the same titles: a change of it
- *  clears the selection. */
+/** The same for two filters that ask for the same titles. */
 export function filterKey(f: ComplianceFilter): string {
   return JSON.stringify(filterVariables(f));
+}
+
+/** True while anything filters: a kind, a rule or a search. "clear all"
+ *  works then. */
+export function isFiltering(f: ComplianceFilter): boolean {
+  return filterKey(f) !== filterKey(CLEARED_FILTER);
+}
+
+/** The filter bar's count: what is left of every title that breaks a rule,
+ *  "230 of 279"; the total alone while nothing filters, or when it isn't
+ *  known; nothing while no title breaks a rule at all. */
+export function countText(left: number, all: number | null | undefined): string {
+  if (left === 0 && !all) return '';
+  return all == null || all === left ? fmtCount(left) : `${fmtCount(left)} of ${fmtCount(all)}`;
 }
 
 /** rules with rule ticked (on) or not. */
@@ -193,7 +247,26 @@ export function findingText(f: ComplianceFinding): string {
   const text = f.text.trim();
   if (text) return text;
   const facts = [f.measured?.trim(), f.limit?.trim() ? `limit ${f.limit.trim()}` : ''].filter((x): x is string => !!x);
-  return facts.length ? `${ruleLabel(f.rule)}: ${facts.join(', ')}` : ruleLabel(f.rule);
+  return sentenceCase(facts.length ? `${ruleLabel(f.rule)}: ${facts.join(', ')}` : ruleLabel(f.rule));
+}
+
+const CAP_RULES: readonly string[] = ['OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'VIDEO_NOT_HEVC'];
+
+/** What processing a title again does to it, from the rules it breaks, next
+ *  to its findings: packaged for the first time; re-encoded, over a cap of
+ *  the transcoder's; packaged again otherwise, its video copied where the
+ *  transcoder's caps were checked and it is within them (capsChecked); ''
+ *  for rules the console does not know. A title whose packaging failed is
+ *  packaged again when it has a package, else for the first time. */
+export function outcomeText(r: Pick<ComplianceRow, 'findings' | 'packageBytes'>, capsChecked: boolean): string {
+  const rules = new Set<string>(r.findings.map((f) => f.rule));
+  const packaged = r.packageBytes != null && r.packageBytes > 0;
+  const again = capsChecked ? 'Packaged again; the video is copied' : 'Packaged again';
+  if (rules.has('NOT_PACKAGED')) return 'Packaged for the first time';
+  if (CAP_RULES.some((c) => rules.has(c))) return 'Re-encoded, then packaged again';
+  if (rules.has('PACKAGING_FAILED')) return packaged ? again : 'Packaged for the first time';
+  if (rules.has('NO_SURROUND') || rules.has('IMAGE_SUBTITLES_MISSING')) return again;
+  return '';
 }
 
 /** rows, then those of more not among them (a page loaded after). */
@@ -204,126 +277,249 @@ export function appendRows(rows: readonly ComplianceRow[], more: readonly Compli
 
 // ---- the re-encode queue
 
-const QUEUE_WORDS: Record<string, string> = { queued: 'queued', sent: 'encoding', done: 'done', failed: 'failed' };
-
-/** Where a title stands in the re-encode queue, in a word; '' for a title
- *  not in it. */
-export function queueWord(queue: string | null | undefined): string {
-  return queue ? (QUEUE_WORDS[queue] ?? queue) : '';
-}
-
-/** The tone of a title's place in the queue. */
-export function queueTone(queue: string | null | undefined): 'neutral' | 'green' | 'amber' | 'blue' {
-  switch (queue) {
-    case 'queued':
-    case 'sent':
-      return 'blue';
-    case 'done':
-      return 'green';
-    case 'failed':
-      return 'amber';
-    default:
-      return 'neutral';
-  }
-}
-
-/** True for a title the queue holds already, waiting or sent: it is not
- *  reworked again. One done or failed is. */
+/** True for a title the queue holds, waiting or under way: it can't be
+ *  ticked or processed again. One done or failed can. */
 export function inQueue(queue: string | null | undefined): boolean {
   return queue === 'queued' || queue === 'sent';
 }
 
+/** A row's status, in the status vocabulary's words: queued, processing,
+ *  or needs attention when its processing failed; none otherwise. A title
+ *  processed and within the rules leaves the list, so there is no lasting
+ *  "done". */
+export function rowStatus(queue: string | null | undefined): { word: string; tone: 'blue' | 'amber'; detail: string | null } | null {
+  switch (queue) {
+    case 'queued':
+      return { word: 'queued', tone: 'blue', detail: null };
+    case 'sent':
+      return { word: 'processing', tone: 'blue', detail: null };
+    case 'failed':
+      return { word: 'needs attention', tone: 'amber', detail: 'Processing failed' };
+    default:
+      return null;
+  }
+}
+
+/** The queue in numbers and words, the counts there are: "6 queued · 2
+ *  processing · 1 needs attention · 34 processed again". */
+export function queueParts(q: ComplianceQueueCounts): { count: string; word: string; tone: 'blue' | 'amber' | null }[] {
+  const parts: { count: string; word: string; tone: 'blue' | 'amber' | null }[] = [];
+  if (q.queued) parts.push({ count: fmtCount(q.queued), word: 'queued', tone: 'blue' });
+  if (q.processing) parts.push({ count: fmtCount(q.processing), word: 'processing', tone: 'blue' });
+  if (q.failed) parts.push({ count: fmtCount(q.failed), word: 'needs attention', tone: 'amber' });
+  if (q.processed) parts.push({ count: fmtCount(q.processed), word: 'processed again', tone: null });
+  return parts;
+}
+
 // ---- the selection
 
-/** The titles ticked: rows of the list by id, or every title that matches
- *  the filter, the rows not loaded too. */
-export type Selection = { mode: 'rows'; ids: readonly string[] } | { mode: 'matching' };
+/** The titles ticked: rows, kept as they were when ticked (a filter may hide
+ *  them since), or every title that matches the filter whose key it holds,
+ *  the rows not loaded too. */
+export type Selection = { mode: 'rows'; rows: readonly ComplianceRow[] } | { mode: 'matching'; key: string };
 
-export const NO_SELECTION: Selection = { mode: 'rows', ids: [] };
+export const NO_SELECTION: Selection = { mode: 'rows', rows: [] };
 
-/** What changes the selection. `loaded` is the ids of the rows the list
- *  shows that can be ticked (none the queue holds already). */
+/** What changes the selection. `loaded` and `rows` are the rows the list
+ *  shows. */
 export type SelectionAction =
-  | { type: 'row'; id: string; on: boolean; loaded: readonly string[] }
-  | { type: 'page'; on: boolean; loaded: readonly string[] }
-  | { type: 'matching' }
+  | { type: 'row'; row: ComplianceRow; on: boolean; loaded: readonly ComplianceRow[] }
+  | { type: 'page'; on: boolean; rows: readonly ComplianceRow[] }
+  | { type: 'matching'; key: string }
   | { type: 'clear' }
-  | { type: 'keep'; loaded: readonly string[] };
+  | { type: 'filter'; key: string }
+  | { type: 'loaded'; rows: readonly ComplianceRow[] };
 
-/** The selection after a: a row ticked or not; every row shown (the header
- *  checkbox); every title that matches; none (cleared, as a change of the
- *  filter clears it); the rows still listed after a refresh. A row unticked
- *  while every match is ticked leaves the other rows shown ticked. */
+const pickable = (r: ComplianceRow) => !inQueue(r.queue);
+
+/** The selection after a:
+ *  - a row ticked or not (one the queue holds can't be);
+ *  - the header checkbox: every row shown that can be ticked, or, pressed
+ *    while it shows a tick, none;
+ *  - every title that matches the filter;
+ *  - none (clear, and a finished action);
+ *  - a change of the filter: ticked rows stay ticked, hidden or not, and
+ *    every match of another filter is no selection any more;
+ *  - rows read again: a ticked row is kept as it is now, and drops out once
+ *    the queue holds it.
+ *  A row unticked while every match is ticked leaves the other rows shown. */
 export function select(s: Selection, a: SelectionAction): Selection {
   switch (a.type) {
     case 'row': {
+      if (!pickable(a.row)) return s;
       if (s.mode === 'matching') {
-        return a.on ? s : { mode: 'rows', ids: a.loaded.filter((id) => id !== a.id) };
+        return a.on ? s : { mode: 'rows', rows: a.loaded.filter((r) => pickable(r) && r.itemId !== a.row.itemId) };
       }
-      const rest = s.ids.filter((id) => id !== a.id);
-      return { mode: 'rows', ids: a.on && a.loaded.includes(a.id) ? [...rest, a.id] : rest };
+      const rest = s.rows.filter((r) => r.itemId !== a.row.itemId);
+      return { mode: 'rows', rows: a.on ? [...rest, a.row] : rest };
     }
-    case 'page':
-      return a.on ? { mode: 'rows', ids: [...a.loaded] } : NO_SELECTION;
+    case 'page': {
+      if (!a.on) return NO_SELECTION;
+      const kept = s.mode === 'rows' ? s.rows : [];
+      const ids = new Set(kept.map((r) => r.itemId));
+      return { mode: 'rows', rows: [...kept, ...a.rows.filter((r) => pickable(r) && !ids.has(r.itemId))] };
+    }
     case 'matching':
-      return { mode: 'matching' };
+      return { mode: 'matching', key: a.key };
     case 'clear':
       return NO_SELECTION;
-    case 'keep': {
+    case 'filter':
+      return s.mode === 'matching' && s.key !== a.key ? NO_SELECTION : s;
+    case 'loaded': {
       if (s.mode === 'matching') return s;
-      const ids = s.ids.filter((id) => a.loaded.includes(id));
-      return ids.length === s.ids.length ? s : { mode: 'rows', ids };
+      const now = new Map(a.rows.map((r) => [r.itemId, r]));
+      let changed = false;
+      const rows = s.rows.flatMap((r) => {
+        const n = now.get(r.itemId);
+        if (!n || n === r) return [r];
+        changed = true;
+        return pickable(n) ? [n] : [];
+      });
+      return changed ? { mode: 'rows', rows } : s;
     }
   }
 }
 
-export function isSelected(s: Selection, id: string): boolean {
-  return s.mode === 'matching' || s.ids.includes(id);
+export function isSelected(s: Selection, row: ComplianceRow): boolean {
+  if (!pickable(row)) return false;
+  return s.mode === 'matching' || s.rows.some((r) => r.itemId === row.itemId);
 }
 
-/** How many titles are ticked: every match counts the filter's total. */
-export function selectedCount(s: Selection, total: number): number {
-  return s.mode === 'matching' ? total : s.ids.length;
+/** How many titles are ticked: every match counts all that match. */
+export function selectedCount(s: Selection, matching: number): number {
+  return s.mode === 'matching' ? matching : s.rows.length;
 }
 
-/** The header checkbox: none of the rows shown ticked, some, or all. */
-export function pageState(s: Selection, loaded: readonly string[]): 'none' | 'some' | 'all' {
+/** The ticked rows the list doesn't show: a filter hides them. */
+export function hiddenCount(s: Selection, loaded: readonly ComplianceRow[]): number {
+  if (s.mode === 'matching') return 0;
+  const shown = new Set(loaded.map((r) => r.itemId));
+  return s.rows.filter((r) => !shown.has(r.itemId)).length;
+}
+
+/** The header checkbox: none of the rows shown that can be ticked are
+ *  ticked, some, or all. */
+export function pageState(s: Selection, loaded: readonly ComplianceRow[]): 'none' | 'some' | 'all' {
+  const can = loaded.filter(pickable);
+  if (can.length === 0) return 'none';
   if (s.mode === 'matching') return 'all';
-  if (loaded.length === 0) return 'none';
-  const n = loaded.filter((id) => s.ids.includes(id)).length;
-  return n === 0 ? 'none' : n === loaded.length ? 'all' : 'some';
+  const n = can.filter((r) => s.rows.some((p) => p.itemId === r.itemId)).length;
+  return n === 0 ? 'none' : n === can.length ? 'all' : 'some';
 }
 
-/** True when every row shown is ticked and more titles match than are
- *  shown: then "select all N matching" is offered. */
-export function offersMatching(s: Selection, loaded: readonly string[], shown: number, total: number): boolean {
-  return s.mode === 'rows' && loaded.length > 0 && pageState(s, loaded) === 'all' && total > shown;
+/** True right after the header checkbox has ticked every row shown, while
+ *  more titles match than are shown: then "select all N matching" is
+ *  offered. */
+export function offersMatching(s: Selection, loaded: readonly ComplianceRow[], matching: number): boolean {
+  return s.mode === 'rows' && pageState(s, loaded) === 'all' && matching > loaded.length;
 }
 
-/** What the selection's bar says is ticked. */
-export function selectionText(s: Selection, total: number): string {
-  return s.mode === 'matching' ? `all ${total} matching selected` : `${s.ids.length} selected`;
+/** The selection toolbar's count: "12 selected", "8 selected · 3 hidden by
+ *  filters". */
+export function selectionText(count: number, hidden: number): string {
+  return hidden ? `${fmtCount(count)} selected · ${fmtCount(hidden)} hidden by filters` : `${fmtCount(count)} selected`;
+}
+
+/** What the toolbar reads out after a change of the count. */
+export function announceText(count: number): string {
+  return count ? `${fmtCount(count)} selected` : 'selection cleared';
+}
+
+// ---- processing titles again
+
+/** The bulk button, the confirm's title and its button: a verb, the object
+ *  and the count. */
+export function processLabel(titles: number): string {
+  return titles === 1 ? 'process 1 title again' : `process ${fmtCount(titles)} titles again`;
+}
+
+/** What the confirm says processing titles again does. */
+export const CONFIRM_BODY =
+  "Each title is processed again from its original, with today's settings, one after another. Its current version keeps playing until the new one is ready, and the original isn't changed.";
+
+/** What a confirm asks about: how many titles, the one's name, and their
+ *  packages' size now and at most after, where known. */
+export interface ProcessScope {
+  titles: number;
+  name: string | null;
+  packageBytes: number | null;
+  estimatedBytes: number | null;
+}
+
+/** The scope of processing these rows again. */
+export function rowsScope(rows: readonly ComplianceRow[]): ProcessScope {
+  const estimated = rows.filter((r) => r.estimatedBytes != null && r.estimatedBytes > 0);
+  return {
+    titles: rows.length,
+    name: rows.length === 1 ? rowTitle(rows[0]) : null,
+    packageBytes: rows.reduce((sum, r) => sum + (r.packageBytes ?? 0), 0),
+    estimatedBytes: estimated.length ? estimated.reduce((sum, r) => sum + (r.estimatedBytes ?? 0), 0) : null,
+  };
+}
+
+/** The scope of processing every title that matches again, from the report's
+ *  totals over all of them. */
+export function matchingScope(m: ComplianceTotals): ProcessScope {
+  return { titles: m.titles, name: null, packageBytes: m.packageBytes, estimatedBytes: m.estimatedBytes };
+}
+
+/** The confirm's facts under its sentence: the title, when it is one, and
+ *  the packages now and at most after. */
+export function confirmFacts(s: ProcessScope): { label: string; value: string }[] {
+  const facts: { label: string; value: string }[] = [];
+  if (s.name) facts.push({ label: 'title', value: s.name });
+  if (s.packageBytes != null && (s.packageBytes > 0 || (s.estimatedBytes ?? 0) > 0)) {
+    facts.push({ label: s.titles === 1 ? 'package' : 'packages', value: sizeChange(s.packageBytes, s.estimatedBytes) });
+  }
+  return facts;
+}
+
+/** The toasts after titles were queued: how many were queued to be processed
+ *  again, then, in a plain one, those the queue held already and those
+ *  skipped. None when nothing was queued or held: that failed, and is a
+ *  banner. */
+export function queuedToasts(r: ComplianceQueued): { state: 'success' | 'neutral'; text: string }[] {
+  const toasts: { state: 'success' | 'neutral'; text: string }[] = [];
+  if (r.queued > 0) {
+    toasts.push({ state: 'success', text: `${fmtCount(r.queued)} ${r.queued === 1 ? 'title' : 'titles'} queued to be processed again.` });
+  }
+  const rest = [
+    r.alreadyQueued ? `${fmtCount(r.alreadyQueued)} in the queue already` : '',
+    r.skipped ? `${fmtCount(r.skipped)} skipped` : '',
+  ].filter(Boolean);
+  if (rest.length && r.queued + r.alreadyQueued > 0) toasts.push({ state: 'neutral', text: rest.join(' · ') });
+  return toasts;
+}
+
+/** True when the queue took the titles, or held them already. */
+export function queuedAny(r: ComplianceQueued): boolean {
+  return r.queued + r.alreadyQueued > 0;
 }
 
 // ---- sizes
 
-const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+const MB = 1e6;
+const GB = 1e9;
+const TB = 1e12;
+const NBSP = ' ';
 
-/** A size in bytes as the consoles write sizes: in steps of 1024, as the item
- *  page's mb, to one decimal below 10 and whole from there: "870 MB",
- *  "4.2 GB", "59 GB", "1.4 TB"; '—' for none. */
+function tenths(v: number, unit: string): string {
+  const t = Math.round(v * 10);
+  return `${t % 10 === 0 ? String(t / 10) : (t / 10).toFixed(1)}${NBSP}${unit}`;
+}
+
+/** A size as chino's downloads write sizes: decimal units, as storage counts
+ *  them; GB with one decimal and no trailing zero ("1.4 GB", "18 GB"), MB
+ *  below 1 GB ("724 MB", never "0 MB" for something there is), and TB, the
+ *  same way, from 1,000 GB; the unit never on a line of its own. '—' for
+ *  none. */
 export function fmtBytes(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n) || n < 0) return '—';
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < UNITS.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  // 1023.7 MB rounds to the next unit
-  if (Math.round(v) >= 1024 && i < UNITS.length - 1) return `1 ${UNITS[i + 1]}`;
-  const text = i > 0 && v < 9.95 ? v.toFixed(1).replace(/\.0$/, '') : String(Math.round(v));
-  return `${text} ${UNITS[i]}`;
+  const mb = Math.round(n / MB);
+  if (mb < 1000) return `${n > 0 ? Math.max(1, mb) : 0}${NBSP}MB`;
+  // 999.96 GB rounds to a TB: "1 TB", not "1000 GB"
+  if (Math.round((n / GB) * 10) < 10000) return tenths(n / GB, 'GB');
+  return tenths(n / TB, 'TB');
 }
 
 /** A size of the list: '—' for none or nothing. */
@@ -331,238 +527,18 @@ export function sizeText(n: number | null | undefined): string {
   return n != null && n > 0 ? fmtBytes(n) : '—';
 }
 
-/** A package's size now and at most after the rework, as the rows and the
- *  summary write it: "59 GB → at most 12 GB"; "59 GB" without an estimate;
- *  "— → at most 12 GB" without a package. */
+/** A package's size now and at most after it is processed again, as the
+ *  rows, the summary and the confirm write it: "59 GB → at most 12 GB";
+ *  "59 GB" without an estimate; "— → at most 12 GB" without a package. */
 export function sizeChange(now: number | null | undefined, after: number | null | undefined): string {
   return after != null && after > 0 ? `${sizeText(now)} → at most ${fmtBytes(after)}` : sizeText(now);
-}
-
-// ---- the rework and its confirm
-
-/** What a rework asks for, as its confirm says it. Sizes are null where they
- *  are not known: every title that matches, of which only a page is loaded. */
-export interface ReworkScope {
-  matching: boolean; // every title that matches the filter, not rows named
-  titles: number;
-  name: string | null; // the title's, when it is one
-  packageBytes: number | null; // the packages now
-  estimatedBytes: number | null; // at most after the rework
-  estimated: number | null; // how many have an estimate; null when not known
-  sized: number | null; // how many titles the sizes are of; null when all
-  withoutPackage: boolean | null; // a title has no package; null when it may
-}
-
-/** The sizes of titles, as a rework's confirm says them: their packages
- *  now, at most after (of those with an estimate), and whether one has no
- *  package. */
-export function sizesOf(
-  rows: readonly Pick<ComplianceRow, 'packageBytes' | 'estimatedBytes'>[],
-): Pick<ReworkScope, 'packageBytes' | 'estimatedBytes' | 'estimated' | 'sized' | 'withoutPackage'> {
-  const estimated = rows.filter((r) => r.estimatedBytes != null && r.estimatedBytes > 0);
-  return {
-    packageBytes: rows.reduce((sum, r) => sum + (r.packageBytes ?? 0), 0),
-    estimatedBytes: estimated.length ? estimated.reduce((sum, r) => sum + (r.estimatedBytes ?? 0), 0) : null,
-    estimated: estimated.length,
-    sized: rows.length,
-    withoutPackage: rows.some((r) => r.packageBytes == null || r.packageBytes <= 0),
-  };
-}
-
-/** The scope of a rework of these rows. */
-export function rowsScope(rows: readonly ComplianceRow[]): ReworkScope {
-  return {
-    matching: false,
-    titles: rows.length,
-    name: rows.length === 1 ? rowTitle(rows[0]) : null,
-    ...sizesOf(rows),
-  };
-}
-
-/** The scope of a rework of every title that matches the filter. Its sizes
- *  are known when every match is loaded, or when one rule is picked and its
- *  line of the summary counts the same titles; otherwise the confirm counts
- *  them (sizesOf every page). */
-export function matchingScope(
-  report: Pick<ComplianceReport, 'total' | 'summary' | 'nextCursor'>,
-  filter: ComplianceFilter,
-  rows: readonly ComplianceRow[],
-): ReworkScope {
-  if (!report.nextCursor && rows.length === report.total) return { ...rowsScope(rows), matching: true };
-  const packaging = filter.rules.length === 0 || filter.rules.some((r) => r === 'NOT_PACKAGED' || r === 'PACKAGING_FAILED');
-  const scope: ReworkScope = {
-    matching: true,
-    titles: report.total,
-    name: null,
-    packageBytes: null,
-    estimatedBytes: null,
-    estimated: null,
-    sized: null,
-    withoutPackage: packaging ? null : false,
-  };
-  const line = filter.rules.length === 1 ? report.summary.find((s) => s.rule === filter.rules[0]) : undefined;
-  if (line && line.titles === report.total) {
-    return { ...scope, packageBytes: line.packageBytes, estimatedBytes: line.estimatedBytes };
-  }
-  return scope;
-}
-
-/** The re-encode queue's pace and what it holds, as far as katalog-manager
- *  says: its settings that are set (a number a pass, at once, a window),
- *  how often its sweep runs, the titles in it and why it sends none now.
- *  Each is null when not known. */
-export interface QueueFacts {
-  rate: number | null;
-  inflight: number | null;
-  window: string | null; // "23:00-07:00"
-  intervalSeconds: number | null;
-  queued: number | null;
-  sent: number | null;
-  idle: string | null;
-}
-
-// The settings katalog-manager reads the queue's pace from.
-const RATE = 'library.reencode.rate';
-const INFLIGHT = 'library.reencode.inflight';
-const WINDOW = 'library.reencode.window';
-const WINDOW_RE = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
-
-/** The queue's facts from katalog-manager's settings, its sweep's interval
- *  and the queue's counts. A setting that is not set, or holds what
- *  katalog-manager does not read as one (it then uses its own value), is not
- *  known: the console never says a value katalog-manager did not give it. */
-export function queueFacts(
-  settings: readonly { key: string; valueText: string | null }[] | null | undefined,
-  intervalSeconds: number | null | undefined,
-  queue: { queued: number; sent: number; idle: string | null } | null | undefined,
-): QueueFacts {
-  const value = (key: string) => settings?.find((s) => s.key.trim() === key)?.valueText?.trim() ?? '';
-  // a rate of 0 sends none: the queue says so itself (idle)
-  const count = (v: string) => (/^\d+$/.test(v) && Number(v) >= 1 ? Number(v) : null);
-  const window = value(WINDOW).replace(/\s+/g, '');
-  return {
-    rate: count(value(RATE)),
-    inflight: count(value(INFLIGHT)),
-    window: WINDOW_RE.test(window) ? window : null,
-    intervalSeconds: intervalSeconds && intervalSeconds > 0 ? intervalSeconds : null,
-    queued: queue ? queue.queued : null,
-    sent: queue ? queue.sent : null,
-    idle: queue?.idle?.trim() || null,
-  };
-}
-
-/** The queue's pace in words, from what is known of it: "up to 2 titles
- *  every 30s, no more than 2 at once, between 23:00 and 07:00 server time";
- *  '' when nothing is. */
-export function paceText(q: QueueFacts | null): string {
-  if (!q) return '';
-  const parts: string[] = [];
-  if (q.rate && q.intervalSeconds) {
-    parts.push(`up to ${q.rate} ${q.rate === 1 ? 'title' : 'titles'} every ${timeoutText(q.intervalSeconds)}`);
-  }
-  if (q.inflight) parts.push(`no more than ${q.inflight} at once`);
-  const [from, to] = q.window ? q.window.split('-') : [];
-  // a window that starts where it ends is the whole day
-  if (from && to && from !== to) parts.push(`between ${from} and ${to} server time`);
-  return parts.join(', ');
-}
-
-function sentence(s: string): string {
-  return s.replace(/[.\s]+$/, '') + '.';
-}
-
-/** Why the queue sends none now, as the confirm says it: outside its
- *  window in words, when that is the reason and the pace names the window;
- *  else katalog-manager's reason as it gives it. '' when it sends. */
-export function idleText(q: QueueFacts | null): string {
-  if (!q?.idle) return '';
-  if (q.window && q.idle.startsWith('outside ') && q.idle.includes(WINDOW)) {
-    return 'the queue sends none right now: that is outside those hours.';
-  }
-  return sentence(`the queue sends none right now: ${q.idle}`);
-}
-
-/** What the confirm says of the sizes; '' when they are not known. */
-function sizesText(s: ReworkScope): string {
-  if (s.packageBytes == null) return '';
-  const after = s.estimatedBytes != null && s.estimatedBytes > 0 ? fmtBytes(s.estimatedBytes) : null;
-  const one = s.titles === 1;
-  if (s.packageBytes <= 0) {
-    if (!after) return '';
-    return one
-      ? `it has no package now, and takes at most ${after} after the rework.`
-      : `they have no package now, and take at most ${after} after the rework.`;
-  }
-  const now = fmtBytes(s.packageBytes);
-  if (one) return after ? `its package takes ${now} now, at most ${after} after the rework.` : `its package takes ${now} now.`;
-  if (!after) return `their packages take ${now} now.`;
-  if (s.estimated != null && s.estimated < (s.sized ?? s.titles)) {
-    return `their packages take ${now} now; the ${s.estimated} of them with an estimate take at most ${after} after the rework.`;
-  }
-  return `their packages take ${now} now, at most ${after} after the rework.`;
-}
-
-/** The confirm's title: how many titles. */
-export function reworkTitle(s: Pick<ReworkScope, 'titles'>): string {
-  return s.titles === 1 ? 'rework 1 title' : `rework ${s.titles} titles`;
-}
-
-/** The confirm's button. */
-export function reworkButton(s: Pick<ReworkScope, 'titles'>): string {
-  return s.titles === 1 ? 'rework' : `rework ${s.titles}`;
-}
-
-/** What the confirm says a rework does, a paragraph each: what it encodes
- *  and with what, the sizes now and after, the queue that sends the titles
- *  at its pace, what plays meanwhile, and a title busy when its turn comes.
- *  The same dialog for one title and many. */
-export function reworkText(s: ReworkScope, q: QueueFacts | null): string[] {
-  const one = s.titles === 1;
-  const settings = 'this instance’s current pipeline settings, the transcoder’s and then the packager’s';
-  const what = one
-    ? `encodes ${s.name ? `“${s.name}”` : 'the title'} again with ${settings}.`
-    : s.matching
-      ? `encodes all ${s.titles} matching titles again with ${settings}.`
-      : `encodes these ${s.titles} titles again with ${settings}.`;
-
-  const pace = paceText(q);
-  const queue = one
-    ? `it goes through the re-encode queue, which sends it on at its own pace${pace ? `: ${pace}` : ''}.`
-    : `they go through the re-encode queue, which sends them on at its own pace${pace ? `: ${pace}` : ''}.`;
-  const holds = [q?.queued ? `${q.queued} queued` : '', q?.sent ? `${q.sent} encoding` : ''].filter(Boolean);
-  const now = [holds.length ? `in the queue now: ${holds.join(', ')}.` : '', idleText(q)].filter(Boolean).join(' ');
-
-  const noPackage = 'a title without a package plays by on-demand transcoding until its package is complete.';
-  const meanwhile = one
-    ? s.withoutPackage
-      ? 'it plays by on-demand transcoding until its package is complete.'
-      : meanwhileText()
-    : s.withoutPackage === false
-      ? meanwhileText('title')
-      : `${meanwhileText('title')} ${noPackage}`;
-  const busy = one
-    ? 'while a transcode or package of it is running, it stays queued.'
-    : 'a title whose transcode or package is running stays queued, and the next one goes.';
-
-  return [what, sizesText(s), queue, now, meanwhile, busy].filter(Boolean);
-}
-
-/** The counts of a queueing, as the tab says them after it. */
-export function queuedCounts(r: ComplianceQueued): string {
-  return `${r.queued} queued · ${r.alreadyQueued} queued already · ${r.skipped} skipped`;
-}
-
-/** True when the queue took the titles, or held them already: the confirm
- *  closes. One that took none (each skipped) stays open, saying why. */
-export function queuedAny(r: ComplianceQueued): boolean {
-  return r.queued + r.alreadyQueued > 0;
 }
 
 // ---- the report's states
 
 /** True when katalog-manager does not know the report: an older one answers
  *  that the query (or its types) is no field (graph-gophers' validation
- *  errors), which is no failure but a catalog that does not check its rules. */
+ *  errors). */
 export function notCheckedHere(error: string | null | undefined): boolean {
   if (!error) return false;
   return (
@@ -571,36 +547,84 @@ export function notCheckedHere(error: string | null | undefined): boolean {
   );
 }
 
+/** Why the list couldn't load, as the couldn't-load state says it: its title,
+ *  the reason only (nothing the button says), whether trying again can help,
+ *  and the technical detail for under "details". Told apart by the HTTP
+ *  status gql reports ("katalog-manager 502"), a fetch that got no answer,
+ *  and GraphQL's errors: a katalog-manager without the rules check, a query
+ *  it doesn't take, or a problem it ran into. */
+export function loadFailure(e: unknown): { title: string; reason: string; retry: boolean; detail: string } {
+  const message = e instanceof Error ? e.message : String(e);
+  const title = "couldn't load the rules";
+  const unreachable = { title, reason: "Can't reach the server.", retry: true, detail: message };
+  if (e instanceof TypeError) return unreachable;
+  const http = /^katalog-manager (\d{3})$/.exec(message);
+  if (http) {
+    const status = Number(http[1]);
+    const detail = `HTTP ${status}`;
+    if (status === 408) return { ...unreachable, detail };
+    if (status === 429) return { title, reason: 'The server is busy.', retry: true, detail };
+    if (status >= 500) return { title, reason: 'The server ran into a problem.', retry: true, detail };
+    if (status === 403) return { title: "you don't have access to this", reason: '', retry: false, detail };
+    return { title, reason: "The server didn't accept the request. Check for an app update.", retry: true, detail };
+  }
+  if (e instanceof Error && e.name === 'GqlError') {
+    if (notCheckedHere(message)) return { title, reason: 'This katalog-manager has no rules check.', retry: false, detail: message };
+    if (/Cannot query field|Unknown (type|argument)/.test(message)) {
+      return { title, reason: "The server didn't accept the request.", retry: true, detail: message };
+    }
+  }
+  return { title, reason: 'The server ran into a problem.', retry: true, detail: message };
+}
+
+/** The banner while the list on the screen couldn't be read again: how old
+ *  what it shows is. */
+export function staleText(loadedAt: number | null, now: number): string {
+  const when = loadedAt ? ago(new Date(loadedAt).toISOString(), now) : '';
+  return when ? `Couldn't refresh the list; it shows what was loaded ${when}.` : "Couldn't refresh the list.";
+}
+
 /** Where the report's check stands: a check running, checked (evaluatedAt
  *  says when), or never checked. */
 export function checkState(r: Pick<ComplianceReport, 'evaluating' | 'evaluatedAt'>): 'checking' | 'checked' | 'never' {
   return r.evaluating ? 'checking' : r.evaluatedAt ? 'checked' : 'never';
 }
 
-/** What the tab says when no title is listed: none matching the filter, or
- *  every title following the rules (those checked, when some are not); ''
- *  while the titles were never checked, which the rules panel says. */
-export function emptyText(r: Pick<ComplianceReport, 'evaluatedAt' | 'notEvaluated'>, f: ComplianceFilter): string {
-  if (!r.evaluatedAt) return '';
-  const noun = f.kind === 'MOVIE' ? 'movie' : f.kind === 'EPISODE' ? 'episode' : 'title';
-  const search = f.search.trim();
-  if (search || f.rules.length) {
-    const who = search ? `${noun} matching “${search}”` : noun;
-    return `no ${who} breaks ${f.rules.length ? 'the rules picked' : 'the rules'}.`;
+/** What takes the table's place when no title is listed, by what is true:
+ *  never checked (and no check running), no match for the search and the
+ *  rules picked, or nothing breaking the rules (those checked, when some
+ *  aren't); null while the first check runs, which the facts line says. */
+export function emptyState(
+  r: Pick<ComplianceReport, 'evaluating' | 'evaluatedAt' | 'notEvaluated'>,
+  f: ComplianceFilter,
+): { kind: 'unknown' | 'nomatch' | 'done'; title: string; text: string } | null {
+  if (!r.evaluatedAt) {
+    return r.evaluating ? null : { kind: 'unknown', title: 'not checked', text: "The titles haven't been checked against the rules." };
   }
-  return r.notEvaluated.length ? `every ${noun} follows the rules that were checked.` : `every ${noun} follows the rules.`;
+  if (f.search.trim() || f.rules.length) {
+    return { kind: 'nomatch', title: 'no matches', text: 'Nothing in this list matches the search and filters.' };
+  }
+  const every = f.kind === 'MOVIE' ? 'Every movie' : f.kind === 'EPISODE' ? 'Every episode' : 'Every title';
+  return {
+    kind: 'done',
+    title: 'nothing breaks the rules',
+    text: r.notEvaluated.length ? `${every} follows the rules that were checked.` : `${every} follows the rules.`,
+  };
 }
 
 /** How often the tab reads the report again by itself, in ms: often while a
- *  check runs, slowly while a title listed is in the queue, else never (0). */
-export function pollMs(r: Pick<ComplianceReport, 'evaluating'> | null, rows: readonly Pick<ComplianceRow, 'queue'>[]): number {
+ *  check runs, slowly while the queue holds titles, else never (0). */
+export function pollMs(
+  r: Pick<ComplianceReport, 'evaluating' | 'queue'> | null,
+  rows: readonly Pick<ComplianceRow, 'queue'>[],
+): number {
   if (!r) return 0;
   if (r.evaluating) return 5_000;
-  return rows.some((x) => inQueue(x.queue)) ? 30_000 : 0;
+  return r.queue.queued + r.queue.processing > 0 || rows.some((x) => inQueue(x.queue)) ? 30_000 : 0;
 }
 
-/** A worker's name as the rules panel heads it: the pipeline's word for it,
- *  with the name it reported when that is another. */
+/** A worker's name as the rules panel heads it: the word for it, with the
+ *  name it reported when that is another. */
 export function workerName(slot: string, w: Pick<WorkerRules, 'worker'>): string {
   const name = w.worker.trim();
   return name && name !== slot ? `${slot} (${name})` : slot;

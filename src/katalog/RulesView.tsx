@@ -1,50 +1,58 @@
-import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Badge, Button, Checkbox, Field, Input, Modal, Select, Spinner, Table, Text } from '@nalet/design-system';
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Badge, Button, Checkbox, Field, Heading, Input, Modal, Select, Spinner, Table, Text } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
-import { CheckCircle2, FileVideo, Info, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, CircleHelp, FileVideo, Info, RefreshCw, Search, SearchX } from 'lucide-react';
 import { useGql } from '../lib/gql';
 import { useQuery } from '../lib/useQuery';
 import { BASE_NOSLASH } from '../lib/basepath';
 import { fmtTime } from './status';
 import { catalogItemHref } from './processing';
 import {
+  CLEARED_FILTER,
+  CONFIRM_BODY,
   DEFAULT_FILTER,
   KIND_OPTIONS,
   NO_SELECTION,
   RULE_ORDER,
+  announceText,
   appendRows,
   checkState,
-  emptyText,
+  confirmFacts,
+  countText,
+  emptyState,
   filterKey,
   filterVariables,
   findingText,
+  fmtCount,
+  hiddenCount,
   inQueue,
   inRuleOrder,
+  isFiltering,
   isOnlyRule,
   isSelected,
+  loadFailure,
   matchingScope,
-  notCheckedHere,
   offersMatching,
+  outcomeText,
   pageState,
   pickRule,
   pollMs,
-  queueFacts,
-  queueTone,
-  queueWord,
+  processLabel,
+  queueParts,
   queuedAny,
-  queuedCounts,
-  reworkButton,
-  reworkText,
-  reworkTitle,
+  queuedToasts,
+  rowStatus,
   rowTitle,
   rowsScope,
   ruleLabel,
+  ruleOption,
   select,
   selectedCount,
   selectionText,
   sizeChange,
   sizeText,
-  sizesOf,
+  staleText,
+  titlesOf,
   withRule,
   workerName,
   type ComplianceFilter,
@@ -54,8 +62,7 @@ import {
   type ComplianceRow,
   type ComplianceRule,
   type ComplianceSummary,
-  type QueueFacts,
-  type ReworkScope,
+  type ProcessScope,
   type WorkerRules,
 } from './compliance';
 
@@ -68,7 +75,9 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
       transcoder { worker version reportedAt rules { key label value } }
       packager { worker version reportedAt rules { key label value } }
     }
-    notEvaluated evaluatedAt evaluating total
+    notEvaluated evaluatedAt evaluating
+    matching { titles originalBytes packageBytes estimatedBytes }
+    queue { queued processing processed failed }
     summary { rule titles packageBytes estimatedBytes }
     rows {
       itemId title year kind seriesId seriesTitle season episode
@@ -78,50 +87,48 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     nextCursor
   }
 }`;
+// Every title that breaks a rule, whatever the filter: the filter bar's
+// "230 of 279".
+const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { matching { titles } } }`;
 const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { queued alreadyQueued skipped message } }`;
 const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String) {
   queueReworkMatching(kind: $kind, rules: $rules, search: $search) { queued alreadyQueued skipped message }
 }`;
 const CHECK = `mutation($kind: ComplianceKind) { refreshCompliance(kind: $kind) }`;
-// The sizes of every title that matches, a page at a time, for the confirm
-// of a rework of them all when more match than are loaded. Past SIZE_PAGES
-// pages it says no sizes rather than some.
-const SIZES_Q = `query RuleSizes($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $first: Int, $after: String) {
-  libraryCompliance(kind: $kind, rules: $rules, search: $search, first: $first, after: $after) {
-    rows { packageBytes estimatedBytes }
-    nextCursor
-  }
-}`;
-const SIZE_PAGE = 500;
-const SIZE_PAGES = 40;
-// The re-encode queue's pace and what it holds, asked apart from the report:
-// the settings it is sent by, how often katalog-manager's sweep runs, and the
-// queue's counts. The confirm says what of them it could read.
-const PACE_Q = `{ settings { key valueText } retryPolicy { intervalSeconds } }`;
-const QUEUE_Q = `{ processingOverview(limit: 1) { reencodeQueue { queued sent idle } } }`;
 
-/** A rework the confirm asks about: the titles named, or every title that
- *  matches the filter. */
-interface Rework {
-  scope: ReworkScope;
+/** Titles the confirm asks about: those named, or every title that matches
+ *  the filter. */
+interface Processing {
+  scope: ProcessScope;
   items: string[];
   matching: ComplianceFilter | null;
-  // from the selection's bar: once queued, the selection is cleared
+  // from the selection toolbar: once queued, the selection is cleared
   bulk: boolean;
+}
+
+/** A banner about something that failed: what, and the technical detail
+ *  for under "details". */
+interface Problem {
+  state: 'warning' | 'error';
+  text: string;
+  detail: string;
+  retry: boolean;
 }
 
 type Reading = 'first' | 'more' | 'refresh';
 
 // useReport reads the report a page at a time: a change of the filter reads
-// it afresh, "show more" adds the next page, and a refresh reads as many rows
-// again as are shown, so their place in the queue is current. A response for
-// a filter changed since is dropped.
+// it afresh from the top, "show more" adds the next page, and a refresh
+// reads as many rows again as are shown, so people keep their place and the
+// rows' statuses are current. A response for a filter changed since is
+// dropped.
 function useReport(filter: ComplianceFilter) {
   const gql = useGql();
   const key = filterKey(filter);
   const [report, setReport] = useState<ComplianceReport | null>(null);
   const [rows, setRows] = useState<ComplianceRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState<Reading | null>('first');
   const seq = useRef(0);
   const at = useRef({ vars: filterVariables(filter), rows: [] as ComplianceRow[], cursor: null as string | null, busy: false });
@@ -149,8 +156,9 @@ function useReport(filter: ComplianceFilter) {
       setReport(r);
       setRows(s.rows);
       setError(null);
+      setLoadedAt(Date.now());
     } catch (e) {
-      if (id === seq.current) setError(e instanceof Error ? e.message : String(e));
+      if (id === seq.current) setError(e);
     } finally {
       if (id === seq.current) {
         s.busy = false;
@@ -177,7 +185,7 @@ function useReport(filter: ComplianceFilter) {
   const poll = useCallback(() => {
     if (!at.current.busy) void read('refresh');
   }, [read]);
-  return { report, rows, error, loading, refresh, more, poll };
+  return { report, rows, error, loadedAt, loading, refresh, more, poll };
 }
 
 // useDebounced is value once it has held still for ms: the search asks
@@ -191,10 +199,41 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-// RulesView is the titles that break the rules the pipeline's workers
-// report: the rules, how many titles break each, and the titles, reworked
-// one at a time, by a selection or every one that matches, through the
-// re-encode queue.
+// useBarHeight is the height of the shell's top bar, which stays at the top:
+// the selection toolbar stays in view right under it.
+function useBarHeight(): number {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>('.sh__bar');
+    if (!bar) return;
+    setH(bar.offsetHeight);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setH(bar.offsetHeight));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+  return h;
+}
+
+interface ToastItem {
+  id: number;
+  state: 'success' | 'neutral';
+  text: string;
+}
+
+// useToasts holds the toasts showing, at most three, the newest last.
+function useToasts() {
+  const [items, setItems] = useState<ToastItem[]>([]);
+  const next = useRef(1);
+  const push = useCallback((t: Omit<ToastItem, 'id'>) => setItems((xs) => [...xs, { ...t, id: next.current++ }].slice(-3)), []);
+  const gone = useCallback((id: number) => setItems((xs) => xs.filter((x) => x.id !== id)), []);
+  return { items, push, gone };
+}
+
+// RulesView is the titles that break the rules the transcoder and the
+// packager report: the rules, how many titles break each and the queue's
+// progress, and the titles, processed again one at a time, by a selection or
+// every one that matches, through the re-encode queue.
 export function RulesView() {
   const gql = useGql();
   const [kind, setKind] = useState<ComplianceKind | ''>(DEFAULT_FILTER.kind);
@@ -203,32 +242,28 @@ export function RulesView() {
   const search = useDebounced(typed, 300);
   const filter = useMemo<ComplianceFilter>(() => ({ kind, rules, search }), [kind, rules, search]);
   const key = filterKey(filter);
-  const { report, rows, error, loading, refresh, more, poll } = useReport(filter);
+  const { report, rows, error, loadedAt, loading, refresh, more, poll } = useReport(filter);
+  const all = useQuery<{ libraryCompliance: { matching: { titles: number } } }>(ALL_Q);
   const [sel, dispatch] = useReducer(select, NO_SELECTION);
-  const [rework, setRework] = useState<Rework | null>(null);
-  const [result, setResult] = useState<ComplianceQueued | null>(null);
+  const [processing, setProcessing] = useState<Processing | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   const [checking, setChecking] = useState(false);
-  const [checkErr, setCheckErr] = useState<string | null>(null);
-  const pace = useQuery<{ settings: { key: string; valueText: string | null }[]; retryPolicy: { intervalSeconds: number } }>(PACE_Q);
-  const queue = useQuery<{ processingOverview: { reencodeQueue: { queued: number; sent: number; idle: string | null } | null } }>(QUEUE_Q);
-  const facts: QueueFacts = queueFacts(
-    pace.data?.settings,
-    pace.data?.retryPolicy.intervalSeconds,
-    queue.data?.processingOverview.reencodeQueue,
-  );
+  const toasts = useToasts();
+  const toolbar = useRef<HTMLDivElement>(null);
+  const searchField = useRef<HTMLInputElement>(null);
+  const barHeight = useBarHeight();
 
-  // a change of the filter clears the selection
+  // a change of the filter keeps the ticked rows; every match of another
+  // filter is no selection any more
   useEffect(() => {
-    dispatch({ type: 'clear' });
+    dispatch({ type: 'filter', key });
   }, [key]);
-  // the rows that can be ticked: none the queue holds already
-  const selectable = useMemo(() => rows.filter((r) => !inQueue(r.queue)).map((r) => r.itemId), [rows]);
-  // after a refresh only the rows still listed stay ticked
+  // rows read again: ticked rows as they are now
   useEffect(() => {
-    dispatch({ type: 'keep', loaded: selectable });
-  }, [selectable]);
+    dispatch({ type: 'loaded', rows });
+  }, [rows]);
 
-  // read again by itself while a check runs or a title listed is in the queue
+  // read again by itself while a check runs or the queue holds titles
   const every = pollMs(report, rows);
   useEffect(() => {
     if (!every) return;
@@ -236,83 +271,129 @@ export function RulesView() {
     return () => clearInterval(t);
   }, [every, poll]);
 
-  const refetchPace = pace.refetch;
-  const refetchQueue = queue.refetch;
-  const open = useCallback(
-    (w: Rework) => {
-      // the queue's pace and counts as they are now
-      refetchPace();
-      refetchQueue();
-      setRework(w);
-    },
-    [refetchPace, refetchQueue],
-  );
+  // a read that failed with the list on the screen: a banner says how old it is
+  const stale: Problem | null =
+    report && error ? { state: 'warning', text: staleText(loadedAt, Date.now()), detail: loadFailure(error).detail, retry: true } : null;
+
+  const refetchAll = all.refetch;
+  const pushToast = toasts.push;
+  // after the dialog has closed and given the focus back to its opener
+  const [refocus, setRefocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!refocus) return;
+    if (refocus === 'toolbar') toolbar.current?.focus();
+    else {
+      Array.from(document.querySelectorAll<HTMLAnchorElement>('a.kat__cell-title'))
+        .find((a) => a.getAttribute('href') === refocus)
+        ?.focus();
+    }
+    setRefocus(null);
+  }, [refocus]);
   // stable: the dialog would take its focus back to its first control on
   // every render of the tab otherwise
-  const close = useCallback(() => setRework(null), []);
+  const close = useCallback(() => setProcessing(null), []);
   const queued = useCallback(
-    (r: ComplianceQueued, w: Rework) => {
-      setRework(null);
-      setResult(r);
-      if (w.bulk) dispatch({ type: 'clear' });
+    (r: ComplianceQueued, p: Processing) => {
+      setProcessing(null);
+      if (!queuedAny(r)) {
+        setProblem({ state: 'error', text: "Couldn't queue the titles.", detail: r.message, retry: false });
+        return;
+      }
+      setProblem(null);
+      for (const t of queuedToasts(r)) pushToast(t);
+      if (p.bulk) dispatch({ type: 'clear' });
+      // the button that opened the dialog goes with the selection, or turns
+      // disabled once the queue holds its title: the toolbar, or the title,
+      // takes the focus instead
+      setRefocus(p.bulk ? 'toolbar' : catalogItemHref(BASE_NOSLASH, p.items[0]));
       refresh();
-      refetchQueue();
+      refetchAll();
     },
-    [refresh, refetchQueue],
+    [refresh, refetchAll, pushToast],
   );
+  const failed = useCallback((e: unknown) => {
+    setProcessing(null);
+    setProblem({ state: 'error', text: "Couldn't queue the titles.", detail: loadFailure(e).detail, retry: false });
+  }, []);
 
   async function checkAgain() {
     setChecking(true);
-    setCheckErr(null);
+    setProblem(null);
     try {
       await gql<{ refreshCompliance: boolean }>(CHECK, { kind: filter.kind || null });
     } catch (e) {
-      setCheckErr(e instanceof Error ? e.message : String(e));
+      setProblem({ state: 'error', text: "Couldn't start a check.", detail: loadFailure(e).detail, retry: false });
     } finally {
       setChecking(false);
       refresh();
     }
   }
 
-  if (notCheckedHere(error)) {
-    return (
-      <div className="kat__state">
-        <Info size={16} className="kat__muted" aria-hidden />
-        <Text variant="muted">this catalog does not check its rules yet.</Text>
-      </div>
-    );
+  function clearAll() {
+    // the button disables itself: the search takes the focus first
+    searchField.current?.focus();
+    setKind(CLEARED_FILTER.kind);
+    setRules(CLEARED_FILTER.rules);
+    setTyped(CLEARED_FILTER.search);
   }
+
+  const head = (
+    <header className="kat__wl-head">
+      <Heading level={2} id="rules-title">
+        rules
+      </Heading>
+      <Text variant="muted">Titles that break a rule the transcoder or the packager reports.</Text>
+    </header>
+  );
+
   if (!report) {
     if (error) {
+      const why = loadFailure(error);
       return (
-        <div className="kat__state">
-          <span className="kat__err">error: {error}</span>
-          <Button variant="ghost" size="sm" leading={<RefreshCw size={14} />} onClick={refresh}>
-            try again
-          </Button>
-        </div>
+        <section className="kat__rules" aria-labelledby="rules-title">
+          {head}
+          <Empty
+            icon={why.retry ? AlertTriangle : Info}
+            title={why.title}
+            text={why.reason}
+            detail={why.detail}
+            action={
+              why.retry ? (
+                <Button size="sm" leading={<RefreshCw size={14} />} onClick={refresh}>
+                  try again
+                </Button>
+              ) : null
+            }
+          />
+        </section>
       );
     }
     return (
-      <div className="kat__state">
-        <Spinner /> <Text variant="muted">loading rules…</Text>
-      </div>
+      <section className="kat__rules" aria-labelledby="rules-title">
+        {head}
+        <div className="kat__state">
+          <Spinner /> <Text variant="muted">loading rules…</Text>
+        </div>
+      </section>
     );
   }
 
-  const total = report.total;
-  const count = selectedCount(sel, total);
-  const head = pageState(sel, selectable);
-  const empty = emptyText(report, filter);
+  const matching = report.matching.titles;
+  const count = selectedCount(sel, matching);
+  const hidden = hiddenCount(sel, rows);
+  const headBox = pageState(sel, rows);
+  const pickable = rows.filter((r) => !inQueue(r.queue));
+  const empty = emptyState(report, filter);
+  const capsChecked = report.rules.transcoder != null;
 
-  function reworkSelection() {
+  const open = (p: Processing) => setProcessing(p);
+  function processSelection() {
     if (!report) return;
     if (sel.mode === 'matching') {
-      open({ scope: matchingScope(report, filter, rows), items: [], matching: filter, bulk: true });
+      open({ scope: matchingScope(report.matching), items: [], matching: filter, bulk: true });
       return;
     }
-    const chosen = rows.filter((r) => isSelected(sel, r.itemId));
-    open({ scope: rowsScope(chosen), items: chosen.map((r) => r.itemId), matching: null, bulk: true });
+    open({ scope: rowsScope(sel.rows), items: sel.rows.map((r) => r.itemId), matching: null, bulk: true });
   }
 
   const cols: TableColumn<ComplianceRow>[] = [
@@ -320,20 +401,20 @@ export function RulesView() {
       key: 'itemId',
       header: (
         <Checkbox
-          aria-label="select every title shown"
-          checked={head === 'all'}
-          indeterminate={head === 'some'}
-          disabled={selectable.length === 0}
-          onChange={(e) => dispatch({ type: 'page', on: e.target.checked, loaded: selectable })}
+          aria-label="select every visible row"
+          checked={headBox === 'all'}
+          indeterminate={headBox === 'some'}
+          disabled={pickable.length === 0}
+          onChange={(e) => dispatch({ type: 'page', on: e.target.checked, rows })}
         />
       ),
       width: 28,
       render: (r) => (
         <Checkbox
           aria-label={`select ${rowTitle(r)}`}
-          checked={!inQueue(r.queue) && isSelected(sel, r.itemId)}
+          checked={isSelected(sel, r)}
           disabled={inQueue(r.queue)}
-          onChange={(e) => dispatch({ type: 'row', id: r.itemId, on: e.target.checked, loaded: selectable })}
+          onChange={(e) => dispatch({ type: 'row', row: r, on: e.target.checked, loaded: rows })}
         />
       ),
     },
@@ -349,13 +430,24 @@ export function RulesView() {
     {
       key: 'findings',
       header: 'findings',
-      render: (r) => (
-        <ul className="kat__findings">
-          {r.findings.map((f, i) => (
-            <li key={`${f.rule}/${i}`}>{findingText(f)}</li>
-          ))}
-        </ul>
-      ),
+      render: (r) => {
+        const outcome = outcomeText(r, capsChecked);
+        return (
+          <div className="kat__findings">
+            <ul>
+              {r.findings.map((f, i) => (
+                <li key={`${f.rule}/${i}`}>{findingText(f)}</li>
+              ))}
+            </ul>
+            {outcome && (
+              <span className="kat__outcome">
+                <span aria-hidden>→ </span>
+                {outcome}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     { key: 'originalBytes', header: 'original', align: 'right', render: (r) => <span className="kat__nowrap">{sizeText(r.originalBytes)}</span> },
     {
@@ -366,15 +458,19 @@ export function RulesView() {
     },
     {
       key: 'queue',
-      header: 'queue',
-      render: (r) =>
-        r.queue ? (
-          <Badge tone={queueTone(r.queue)} dot={r.queue === 'sent'}>
-            {queueWord(r.queue)}
-          </Badge>
-        ) : (
-          <span className="kat__muted">—</span>
-        ),
+      header: 'status',
+      render: (r) => {
+        const s = rowStatus(r.queue);
+        if (!s) return null;
+        return (
+          <div className="kat__status">
+            <Badge tone={s.tone} dot>
+              {s.word}
+            </Badge>
+            {s.detail && <span className="kat__status-detail">{s.detail}</span>}
+          </div>
+        );
+      },
     },
     {
       key: 'evaluatedAt',
@@ -386,74 +482,157 @@ export function RulesView() {
           size="sm"
           leading={<FileVideo size={13} />}
           disabled={inQueue(r.queue)}
-          aria-label={`rework ${rowTitle(r)}`}
+          aria-label={`process again: ${rowTitle(r)}`}
           onClick={() => open({ scope: rowsScope([r]), items: [r.itemId], matching: null, bulk: false })}
         >
-          rework
+          process again
         </Button>
       ),
     },
   ];
 
+  const parts = queueParts(report.queue);
+  const banners = [
+    report.notEvaluated.length ? (
+      <Banner key="unchecked" state="warning">
+        {report.notEvaluated.map((line) => (
+          <span key={line}>{line}</span>
+        ))}
+      </Banner>
+    ) : null,
+    (problem ?? stale) ? (
+      <Banner
+        key="problem"
+        state={(problem ?? stale)!.state}
+        detail={(problem ?? stale)!.detail}
+        actions={
+          problem ? (
+            <Button variant="ghost" size="sm" onClick={() => setProblem(null)}>
+              dismiss
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" leading={<RefreshCw size={14} />} onClick={refresh}>
+              try again
+            </Button>
+          )
+        }
+      >
+        <span>{(problem ?? stale)!.text}</span>
+      </Banner>
+    ) : null,
+  ];
+
   return (
-    <div>
-      <RulesPanel report={report} checking={checking} error={checkErr} onCheck={() => void checkAgain()} />
+    <section className="kat__rules" aria-labelledby="rules-title">
+      {head}
+      <RulesPanel report={report} checking={checking} onCheck={() => void checkAgain()} />
+      {banners}
 
       {report.summary.length > 0 && (
-        <>
-          <div className="kat__section">
-            <Text variant="ui">by rule</Text>
-          </div>
-          <div className="kat__summary">
-            <SummaryTable summary={report.summary} rules={rules} onPick={(rule) => setRules(pickRule(rules, rule))} />
-          </div>
-        </>
+        <div className="kat__summary">
+          <h3 className="kat__h3">by rule</h3>
+          <SummaryTable summary={report.summary} rules={rules} onPick={(rule) => setRules(pickRule(rules, rule))} />
+          {parts.length > 0 && (
+            <p className="kat__queue">
+              <span className="kat__queue-label">queue</span>
+              {parts.map((p, i) => (
+                <Fragment key={p.word}>
+                  {i > 0 && <span className="kat__muted"> · </span>}
+                  <span className={p.tone ? `kat__count--${p.tone}` : undefined}>{p.count}</span> {p.word}
+                </Fragment>
+              ))}
+            </p>
+          )}
+        </div>
       )}
 
-      <div className="kat__filters">
-        <Field label="type">
-          <Select value={kind} onChange={(e) => setKind(e.target.value as ComplianceKind | '')} options={KIND_OPTIONS} />
-        </Field>
-        <Field label="search">
-          <Input placeholder="title…" value={typed} leading={<Search size={14} />} onChange={(e) => setTyped(e.target.value)} />
-        </Field>
-        <div className="kat__spacer" />
-        {loading === 'first' && <Spinner size={14} label="loading titles" />}
-        <Text variant="dim">
-          {total} {total === 1 ? 'title' : 'titles'}
-        </Text>
-      </div>
-      <fieldset className="kat__rulepick">
-        <legend>rules</legend>
-        <div className="kat__rulepick-list">
-          {RULE_ORDER.map((rule) => (
-            <Checkbox
-              key={rule}
-              label={ruleLabel(rule)}
-              checked={rules.includes(rule)}
-              onChange={(e) => setRules(withRule(rules, rule, e.target.checked))}
+      <div className="kat__filterbar" role="search" aria-label="filters">
+        <div className="kat__filters">
+          <Field label="search">
+            <Input
+              ref={searchField}
+              type="search"
+              placeholder="search titles"
+              value={typed}
+              leading={<Search size={14} />}
+              onChange={(e) => setTyped(e.target.value)}
             />
-          ))}
+          </Field>
+          <Field label="kind">
+            <Select value={kind} onChange={(e) => setKind(e.target.value as ComplianceKind | '')} options={KIND_OPTIONS} />
+          </Field>
+          <div className="kat__spacer" />
+          {loading === 'first' && <Spinner size={14} label="loading titles" />}
+          <span className="kat__count" aria-live="polite" aria-atomic="true">
+            {countText(matching, all.data?.libraryCompliance.matching.titles)}
+          </span>
+          <Button variant="ghost" size="sm" disabled={!isFiltering({ kind, rules, search: typed })} onClick={clearAll}>
+            clear all
+          </Button>
         </div>
-      </fieldset>
+        <fieldset className="kat__rulepick">
+          <legend>rules</legend>
+          <div className="kat__rulepick-list">
+            {RULE_ORDER.map((rule) => (
+              <Checkbox
+                key={rule}
+                label={ruleOption(rule)}
+                checked={rules.includes(rule)}
+                onChange={(e) => setRules(withRule(rules, rule, e.target.checked))}
+              />
+            ))}
+          </div>
+        </fieldset>
+      </div>
 
-      {error && <div className="kat__err">error: {error}</div>}
       {rows.length === 0 ? (
         // not while the titles of a filter changed are on their way
         empty &&
         loading !== 'first' && (
-          <div className="kat__state">
-            <CheckCircle2 size={16} className="kat__muted" aria-hidden />
-            <Text variant="muted">{empty}</Text>
-          </div>
+          <Empty
+            icon={empty.kind === 'done' ? CheckCircle2 : empty.kind === 'nomatch' ? SearchX : CircleHelp}
+            title={empty.title}
+            text={empty.text}
+            action={
+              empty.kind === 'nomatch' ? (
+                <Button variant="ghost" size="sm" onClick={clearAll}>
+                  clear filters
+                </Button>
+              ) : empty.kind === 'unknown' ? (
+                <Button size="sm" variant="primary" leading={<RefreshCw size={14} />} loading={checking} onClick={() => void checkAgain()}>
+                  check the titles
+                </Button>
+              ) : null
+            }
+          />
         )
       ) : (
-        <Table columns={cols} rows={rows} rowKey={(r) => r.itemId} dense />
+        <>
+          <SelectionToolbar
+            boxRef={toolbar}
+            top={barHeight}
+            heading={titlesOf(kind, matching)}
+            count={count}
+            text={selectionText(count, hidden)}
+            offer={offersMatching(sel, rows, matching) ? `select all ${fmtCount(matching)} matching` : null}
+            action={processLabel(count)}
+            onClear={() => {
+              dispatch({ type: 'clear' });
+              toolbar.current?.focus();
+            }}
+            onSelectAll={() => {
+              dispatch({ type: 'matching', key });
+              toolbar.current?.focus();
+            }}
+            onAction={processSelection}
+          />
+          <Table columns={cols} rows={rows} rowKey={(r) => r.itemId} dense aria-label="titles" />
+        </>
       )}
-      {rows.length > 0 && rows.length < total && (
+      {rows.length > 0 && rows.length < matching && (
         <div className="kat__more">
           <Text variant="dim">
-            {rows.length} of {total} shown
+            {fmtCount(rows.length)} of {fmtCount(matching)} shown
           </Text>
           {report.nextCursor && (
             <Button variant="ghost" size="sm" loading={loading === 'more'} onClick={more}>
@@ -463,83 +642,32 @@ export function RulesView() {
         </div>
       )}
 
-      {(count > 0 || result) && (
-        <div className="kat__dock">
-          {result && <Queued result={result} onDismiss={() => setResult(null)} />}
-          {count > 0 && (
-            <div className="kat__bulk" role="region" aria-label="selected titles">
-              <Text variant="ui" aria-live="polite">
-                {selectionText(sel, total)}
-              </Text>
-              {offersMatching(sel, selectable, rows.length, total) && (
-                <Button variant="ghost" size="sm" onClick={() => dispatch({ type: 'matching' })}>
-                  select all {total} matching
-                </Button>
-              )}
-              <span className="kat__spacer" />
-              <Button variant="ghost" size="sm" onClick={() => dispatch({ type: 'clear' })}>
-                clear selection
-              </Button>
-              <Button size="sm" leading={<FileVideo size={13} />} onClick={reworkSelection}>
-                rework {count}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {rework && <ReworkDialog rework={rework} facts={facts} onClose={close} onQueued={queued} />}
-    </div>
+      <Toaster items={toasts.items} onGone={toasts.gone} />
+      {processing && <ProcessDialog processing={processing} onClose={close} onQueued={queued} onFailed={failed} />}
+    </section>
   );
 }
 
-// RulesPanel is the rules each worker reported, what the report could not
-// check, and when the titles were checked, checked again on asking.
-function RulesPanel({
-  report,
-  checking,
-  error,
-  onCheck,
-}: {
-  report: ComplianceReport;
-  checking: boolean;
-  error: string | null;
-  onCheck: () => void;
-}) {
+// RulesPanel is the rules each worker reported, and when the titles were
+// checked, checked again on asking.
+function RulesPanel({ report, checking, onCheck }: { report: ComplianceReport; checking: boolean; onCheck: () => void }) {
   const state = checkState(report);
   return (
-    <section className="kat__panel kat__rules" aria-label="the pipeline’s rules">
+    <div className="kat__panel kat__rules-panel">
       <div className="kat__workers">
         <WorkerBlock slot="transcoder" w={report.rules.transcoder} />
         <WorkerBlock slot="packager" w={report.rules.packager} />
       </div>
-      {report.notEvaluated.map((line) => (
-        <div key={line} className="kat__err">
-          {line}
+      {state !== 'never' && (
+        <div className="kat__checked">
+          {state === 'checking' && <Spinner size={12} />}
+          <Text variant="muted">{state === 'checking' ? 'Checking the titles…' : `Checked ${fmtTime(report.evaluatedAt)}`}</Text>
+          <Button variant="ghost" size="sm" leading={<RefreshCw size={14} />} loading={checking} disabled={state === 'checking'} onClick={onCheck}>
+            check again
+          </Button>
         </div>
-      ))}
-      <div className="kat__checked">
-        {state === 'checking' && <Spinner size={12} />}
-        <Text variant="muted">
-          {state === 'checking'
-            ? 'checking the titles…'
-            : state === 'checked'
-              ? `checked ${fmtTime(report.evaluatedAt)}`
-              : 'the titles have not been checked.'}
-        </Text>
-        <Button
-          variant="ghost"
-          size="sm"
-          leading={<RefreshCw size={14} />}
-          loading={checking}
-          disabled={state === 'checking'}
-          onClick={onCheck}
-        >
-          {state === 'never' ? 'check the titles' : 'check again'}
-        </Button>
-        {error && <span className="kat__err">{error}</span>}
-      </div>
-    </section>
+      )}
+    </div>
   );
 }
 
@@ -549,11 +677,9 @@ function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
   return (
     <div className="kat__worker">
       <div className="kat__worker-head">
-        <Text as="h2" variant="ui">
-          {w ? workerName(slot, w) : slot}
-        </Text>
+        <h3 className="kat__h3">{w ? workerName(slot, w) : slot}</h3>
         {w?.version && <span className="kat__mono kat__muted">{w.version}</span>}
-        {w ? <Text variant="dim">reported {fmtTime(w.reportedAt)}</Text> : <Badge tone="amber">not reported</Badge>}
+        {w ? <Text variant="dim">Reported {fmtTime(w.reportedAt)}</Text> : <Badge tone="amber">not reported</Badge>}
       </div>
       {w &&
         (w.rules.length ? (
@@ -566,7 +692,7 @@ function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
             ))}
           </dl>
         ) : (
-          <Text variant="muted">it reported no rules.</Text>
+          <Text variant="muted">It reported no rules.</Text>
         ))}
     </div>
   );
@@ -593,7 +719,7 @@ function SummaryTable({
         </button>
       ),
     },
-    { key: 'titles', header: 'titles', align: 'right', render: (s) => (s.titles ? s.titles : <span className="kat__muted">0</span>) },
+    { key: 'titles', header: 'titles', align: 'right', render: (s) => (s.titles ? fmtCount(s.titles) : <span className="kat__muted">0</span>) },
     {
       key: 'packageBytes',
       header: 'packages',
@@ -601,125 +727,262 @@ function SummaryTable({
       render: (s) => <span className="kat__nowrap">{sizeChange(s.packageBytes, s.estimatedBytes)}</span>,
     },
   ];
-  return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense />;
+  return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense aria-label="titles by rule" />;
 }
 
-// Queued says what the last rework queued; it stays until dismissed.
-function Queued({ result, onDismiss }: { result: ComplianceQueued; onDismiss: () => void }) {
+// SelectionToolbar heads the table: what it holds, or, once rows are ticked,
+// the count, clear, select all and the one action for exactly that
+// selection. It stays in view under the top bar, is one tab stop whose
+// controls the arrow keys move between, and reads out each change of the
+// count.
+function SelectionToolbar({
+  boxRef: ref,
+  top,
+  heading,
+  count,
+  text,
+  offer,
+  action,
+  onClear,
+  onSelectAll,
+  onAction,
+}: {
+  boxRef: RefObject<HTMLDivElement | null>;
+  top: number;
+  heading: string;
+  count: number;
+  text: string;
+  offer: string | null;
+  action: string;
+  onClear: () => void;
+  onSelectAll: () => void;
+  onAction: () => void;
+}) {
+  const [said, setSaid] = useState('');
+  const last = useRef(count);
+  useEffect(() => {
+    if (count !== last.current) setSaid(announceText(count));
+    last.current = count;
+  }, [count]);
+  // one tab stop: the one with tabindex 0, the others -1
+  useEffect(() => {
+    const items = controls(ref.current);
+    const current = items.find((b) => b.tabIndex === 0) ?? items[0];
+    for (const b of items) b.tabIndex = b === current ? 0 : -1;
+  });
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const items = controls(ref.current);
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const to =
+      e.key === 'ArrowRight' ? (i + 1) % items.length
+        : e.key === 'ArrowLeft' ? (i - 1 + items.length) % items.length
+          : e.key === 'Home' ? 0
+            : e.key === 'End' ? items.length - 1
+              : -1;
+    if (to < 0 || items.length === 0) return;
+    e.preventDefault();
+    for (const b of items) b.tabIndex = -1;
+    items[to].tabIndex = 0;
+    items[to].focus();
+  }
+
   return (
-    <div className="kat__notice" role="status">
-      <FileVideo size={15} aria-hidden />
-      <div className="kat__notice-body">
-        <Text variant="ui">{queuedCounts(result)}</Text>
-        {result.message && <Text variant="muted">{result.message}</Text>}
-      </div>
-      <Button variant="ghost" size="sm" onClick={onDismiss}>
-        dismiss
-      </Button>
+    <div
+      ref={ref}
+      className={`kat__seltool${count ? ' kat__seltool--on' : ''}`}
+      role="toolbar"
+      aria-label="titles"
+      tabIndex={-1}
+      style={{ top }}
+      onKeyDown={onKeyDown}
+    >
+      {count ? (
+        <>
+          <span className="kat__seltool-count">{text}</span>
+          <Button variant="ghost" size="sm" onClick={onClear}>
+            clear
+          </Button>
+          {offer && (
+            <Button variant="ghost" size="sm" onClick={onSelectAll}>
+              {offer}
+            </Button>
+          )}
+          <span className="kat__spacer" />
+          <Button variant="primary" size="sm" leading={<FileVideo size={13} />} onClick={onAction}>
+            {action}
+          </Button>
+        </>
+      ) : (
+        <span className="kat__seltool-heading">{heading}</span>
+      )}
+      <span className="kat__sr" aria-live="polite">
+        {said}
+      </span>
     </div>
   );
 }
 
-// ReworkDialog asks before titles go to the re-encode queue, the same for one
-// title and for many: how many, their sizes now and after, the queue's pace,
-// and what plays meanwhile. One that queued none (each skipped) stays open,
-// saying why.
-function ReworkDialog({
-  rework,
-  facts,
+function controls(el: HTMLElement | null): HTMLElement[] {
+  return el ? Array.from(el.querySelectorAll<HTMLElement>('button:not([disabled])')) : [];
+}
+
+// Banner is a message about the list as a whole: what it leaves out, or a
+// read or an action that failed, with the technical detail under "details".
+function Banner({
+  state,
+  children,
+  detail,
+  actions,
+}: {
+  state: 'warning' | 'error';
+  children: ReactNode;
+  detail?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className={`kat__banner kat__banner--${state}`} role={state === 'error' ? 'alert' : 'status'}>
+      <AlertTriangle size={15} aria-hidden className="kat__banner-glyph" />
+      <div className="kat__banner-body">
+        {children}
+        {detail && (
+          <details className="kat__details">
+            <summary>details</summary>
+            <code>{detail}</code>
+          </details>
+        )}
+      </div>
+      {actions}
+    </div>
+  );
+}
+
+// Empty takes the table's place when there is nothing to list, saying which
+// kind of empty it is: its title, one sentence, and at most one way forward.
+function Empty({
+  icon: Icon,
+  title,
+  text,
+  detail,
+  action,
+}: {
+  icon: typeof Info;
+  title: string;
+  text: string;
+  detail?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="kat__empty">
+      <Icon size={20} aria-hidden className="kat__muted" />
+      <h3 className="kat__h3">{title}</h3>
+      {text && <Text variant="muted">{text}</Text>}
+      {detail && (
+        <details className="kat__details">
+          <summary>details</summary>
+          <code>{detail}</code>
+        </details>
+      )}
+      {action}
+    </div>
+  );
+}
+
+// Toaster is where the toasts show, at the bottom of the screen: a polite
+// live region that is there before the first toast.
+function Toaster({ items, onGone }: { items: ToastItem[]; onGone: (id: number) => void }) {
+  return (
+    <section className="kat__toaster" aria-label="notifications">
+      <ol className="kat__toasts" aria-live="polite" aria-relevant="additions text">
+        {items.map((t) => (
+          <Toast key={t.id} toast={t} onGone={onGone} />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+// Toast leaves after five seconds; while the pointer rests on it the count
+// pauses, and goes on with the time that was left.
+function Toast({ toast, onGone }: { toast: ToastItem; onGone: (id: number) => void }) {
+  const [paused, setPaused] = useState(false);
+  const left = useRef(5000);
+  useEffect(() => {
+    if (paused) return;
+    const from = Date.now();
+    const t = setTimeout(() => onGone(toast.id), left.current);
+    return () => {
+      clearTimeout(t);
+      left.current = Math.max(0, left.current - (Date.now() - from));
+    };
+  }, [paused, onGone, toast.id]);
+  return (
+    <li className={`kat__toast kat__toast--${toast.state}`} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+      {toast.state === 'success' ? <Check size={13} aria-hidden /> : <Info size={13} aria-hidden />}
+      <span>{toast.text}</span>
+    </li>
+  );
+}
+
+// ProcessDialog asks before titles go to the re-encode queue, the same for
+// one title and for many: its title the button's words, what processing them
+// again does, and their packages now and at most after.
+function ProcessDialog({
+  processing,
   onClose,
   onQueued,
+  onFailed,
 }: {
-  rework: Rework;
-  facts: QueueFacts;
+  processing: Processing;
   onClose: () => void;
-  onQueued: (r: ComplianceQueued, w: Rework) => void;
+  onQueued: (r: ComplianceQueued, p: Processing) => void;
+  onFailed: (e: unknown) => void;
 }) {
   const gql = useGql();
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [scope, setScope] = useState(rework.scope);
-  // every title that matches, more than are loaded: their sizes are counted
-  const [counting, setCounting] = useState(!!rework.matching && rework.scope.packageBytes == null);
-
-  useEffect(() => {
-    if (!counting || !rework.matching) return;
-    let live = true;
-    const vars = filterVariables(rework.matching);
-    void (async () => {
-      type Sizes = Pick<ComplianceRow, 'packageBytes' | 'estimatedBytes'>;
-      const rows: Sizes[] = [];
-      let after: string | null = null;
-      for (let page = 0; page < SIZE_PAGES; page++) {
-        const d = await gql<{ libraryCompliance: { rows: Sizes[]; nextCursor: string | null } }>(SIZES_Q, {
-          ...vars,
-          first: SIZE_PAGE,
-          after,
-        });
-        rows.push(...d.libraryCompliance.rows);
-        after = d.libraryCompliance.nextCursor;
-        if (!after || !live) break;
-      }
-      if (live && !after) setScope((s) => ({ ...s, ...sizesOf(rows) }));
-    })()
-      .catch(() => {
-        /* the sizes go unsaid */
-      })
-      .finally(() => live && setCounting(false));
-    return () => {
-      live = false;
-    };
-    // counted once, when the dialog opens
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const label = processLabel(processing.scope.titles);
+  const facts = confirmFacts(processing.scope);
 
   async function submit() {
     setBusy(true);
-    setErr(null);
     try {
-      const r = rework.matching
-        ? (await gql<{ queueReworkMatching: ComplianceQueued }>(QUEUE_MATCHING, filterVariables(rework.matching))).queueReworkMatching
-        : (await gql<{ queueRework: ComplianceQueued }>(QUEUE_ITEMS, { items: rework.items })).queueRework;
-      if (queuedAny(r)) {
-        onQueued(r, rework);
-        return;
-      }
-      setErr(r.message || queuedCounts(r));
+      const r = processing.matching
+        ? (await gql<{ queueReworkMatching: ComplianceQueued }>(QUEUE_MATCHING, filterVariables(processing.matching))).queueReworkMatching
+        : (await gql<{ queueRework: ComplianceQueued }>(QUEUE_ITEMS, { items: processing.items })).queueRework;
+      onQueued(r, processing);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      onFailed(e);
     }
-    setBusy(false);
   }
 
   return (
     <Modal
       open
       onClose={onClose}
-      title={reworkTitle(rework.scope)}
-      width={560}
+      title={label}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>
             cancel
           </Button>
-          <Button size="sm" leading={<FileVideo size={13} />} loading={busy} onClick={() => void submit()}>
-            {reworkButton(rework.scope)}
+          <Button variant="primary" size="sm" leading={<FileVideo size={13} />} loading={busy} onClick={() => void submit()}>
+            {label}
           </Button>
         </>
       }
     >
       <div className="kat__form">
-        {reworkText(scope, facts).map((p, i) => (
-          <Fragment key={p}>
-            <Text variant="muted">{p}</Text>
-            {i === 0 && counting && (
-              <div className="kat__state kat__counting">
-                <Spinner size={12} /> <Text variant="dim">counting their sizes…</Text>
-              </div>
-            )}
-          </Fragment>
-        ))}
-        {err && <div className="kat__err">{err}</div>}
+        <p className="kat__confirm-body">{CONFIRM_BODY}</p>
+        {facts.length > 0 && (
+          <dl className="kat__kv kat__confirm-facts">
+            {facts.map((f) => (
+              <Fragment key={f.label}>
+                <dt>{f.label}</dt>
+                <dd className="kat__mono">{f.value}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        )}
       </div>
     </Modal>
   );
