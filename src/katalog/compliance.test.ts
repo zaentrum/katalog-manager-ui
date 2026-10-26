@@ -836,6 +836,27 @@ test('a search that matches no title has no check time of its own, and the check
   assert.equal(everChecked(none, undefined, search), true);
 });
 
+test('before the check has looked at any title, the tab is its not-checked state alone', () => {
+  const none = { evaluating: false, evaluatedAt: null, notEvaluated: [] };
+  // no title of any kind checked: never, whatever the filter
+  assert.equal(everChecked(none, 0, DEFAULT_FILTER), false);
+  assert.equal(everChecked(none, 0, { ...DEFAULT_FILTER, search: 'zzz' }), false);
+  assert.equal(checkState(none, false), 'never');
+  assert.deepEqual(emptyState(none, DEFAULT_FILTER, false), {
+    kind: 'unknown',
+    title: 'not checked',
+    text: 'The titles haven’t been checked against the rules.',
+  });
+  // until the unfiltered read is in, and no search was typed: never
+  assert.equal(everChecked(none, null, DEFAULT_FILTER), false);
+  // the first check runs: the check's line says so, and nothing else shows
+  assert.equal(checkState({ ...none, evaluating: true }, false), 'checking');
+  assert.equal(emptyState({ ...none, evaluating: true }, DEFAULT_FILTER, false), null);
+  // once it has looked at one, the report's time says so before the
+  // unfiltered read is read again
+  assert.equal(everChecked({ evaluatedAt: '2026-10-26T08:00:00Z' }, 0, DEFAULT_FILTER), true);
+});
+
 test('with no title listed, the table’s place says which kind of empty it is', () => {
   const checked = { evaluating: false, evaluatedAt: '2026-10-26T08:00:00Z', notEvaluated: [] };
   assert.deepEqual(emptyState(checked, DEFAULT_FILTER), { kind: 'done', title: 'nothing breaks the rules', text: 'Every movie follows the rules.' });

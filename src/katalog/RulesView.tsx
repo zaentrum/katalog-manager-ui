@@ -742,7 +742,9 @@ export function RulesView() {
       />
       {banners}
 
-      {summary.length > 0 && (
+      {/* until the check has looked at a title, the not-checked state alone:
+          no summary, rules in force or filters */}
+      {ever && summary.length > 0 && (
         <div className="kat__summary">
           <h3 className="kat__h3">by rule</h3>
           <ScrollEdges>
@@ -773,57 +775,60 @@ export function RulesView() {
         </div>
       )}
 
-      <RulesPanel report={report} />
+      {ever && <RulesPanel report={report} />}
 
       {/* the filters and the table take more of the screen than the column
-          above them, where there is more */}
-      <div className="kat__wide">
-        <div className="kat__filterbar" role="search" aria-label="filters">
-          <div className="kat__filters">
-            <Field label="search">
-              <Input
-                ref={searchField}
-                type="search"
-                placeholder="search titles"
-                value={typed}
-                leading={<Search size={14} />}
-                onChange={(e) => setTyped(e.target.value)}
-              />
-            </Field>
-            <Field label="kind">
-              <Select value={kind} onChange={(e) => setKind(e.target.value as ComplianceKind | '')} options={KIND_OPTIONS} />
-            </Field>
-            <div className="kat__spacer" />
-            <div className="kat__filter-end">
-              {loading === 'first' && <Spinner size={14} label="loading titles" />}
-              <span className="kat__count" aria-live="polite" aria-atomic="true">
-                {countText(matching, all.data?.libraryCompliance.matching.titles, isFiltering(filter))}
-              </span>
-              <Button variant="ghost" size="sm" leading={<Download size={14} />} loading={saving} disabled={matching === 0} onClick={() => void saveCsv()}>
-                {/* one label: the button's words are lowercase, the format's name isn't */}
-                <span>
-                  download <span className="kat__keepcase">CSV</span>
-                </span>
-              </Button>
-              <Button variant="ghost" size="sm" disabled={!isFiltering({ kind, rules, search: typed })} onClick={clearAll}>
-                clear all
-              </Button>
-            </div>
-          </div>
-          <fieldset className="kat__rulepick">
-            <legend>rules</legend>
-            <div className="kat__rulepick-list">
-              {checked.map((rule) => (
-                <Checkbox
-                  key={rule}
-                  label={<span className="kat__mono">{ruleTag(rule)}</span>}
-                  checked={rules.includes(rule)}
-                  onChange={(e) => setRules(withRule(rules, rule, e.target.checked))}
+          above them, where there is more; the not-checked state alone keeps
+          to the column */}
+      <div className={ever ? 'kat__wide' : undefined}>
+        {ever && (
+          <div className="kat__filterbar" role="search" aria-label="filters">
+            <div className="kat__filters">
+              <Field label="search">
+                <Input
+                  ref={searchField}
+                  type="search"
+                  placeholder="search titles"
+                  value={typed}
+                  leading={<Search size={14} />}
+                  onChange={(e) => setTyped(e.target.value)}
                 />
-              ))}
+              </Field>
+              <Field label="kind">
+                <Select value={kind} onChange={(e) => setKind(e.target.value as ComplianceKind | '')} options={KIND_OPTIONS} />
+              </Field>
+              <div className="kat__spacer" />
+              <div className="kat__filter-end">
+                {loading === 'first' && <Spinner size={14} label="loading titles" />}
+                <span className="kat__count" aria-live="polite" aria-atomic="true">
+                  {countText(matching, all.data?.libraryCompliance.matching.titles, isFiltering(filter))}
+                </span>
+                <Button variant="ghost" size="sm" leading={<Download size={14} />} loading={saving} disabled={matching === 0} onClick={() => void saveCsv()}>
+                  {/* one label: the button's words are lowercase, the format's name isn't */}
+                  <span>
+                    download <span className="kat__keepcase">CSV</span>
+                  </span>
+                </Button>
+                <Button variant="ghost" size="sm" disabled={!isFiltering({ kind, rules, search: typed })} onClick={clearAll}>
+                  clear all
+                </Button>
+              </div>
             </div>
-          </fieldset>
-        </div>
+            <fieldset className="kat__rulepick">
+              <legend>rules</legend>
+              <div className="kat__rulepick-list">
+                {checked.map((rule) => (
+                  <Checkbox
+                    key={rule}
+                    label={<span className="kat__mono">{ruleTag(rule)}</span>}
+                    checked={rules.includes(rule)}
+                    onChange={(e) => setRules(withRule(rules, rule, e.target.checked))}
+                  />
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        )}
 
         {rows.length === 0 ? (
           // not while the titles of a filter changed are on their way
