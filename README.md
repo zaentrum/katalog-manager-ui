@@ -52,26 +52,40 @@ first, as against an older one the dialog says the field is unknown.
 
 ## Rules
 
-Catalog management's **Rules** tab is a worklist of the titles that break a
-rule the transcoder or the packager reports (katalog-manager's
-`libraryCompliance`). At the top, each worker's rules as it reported them, in
-words with the raw config under details, and when, or that it never did, and
-when the titles were checked, with **check again** (`refreshCompliance`); a
-banner says what the report leaves out. Then
-how many titles break each rule, with their packages' size now and at most
-after, in two columns (a rule lists its titles alone), and the re-encode
+Catalog management's **Rules** tab is the report of the titles that break a
+rule the transcoder or the packager reports, as katalog-manager's check
+measured them (`libraryCompliance`): a program's output, the same each time
+it runs. At the top, one line says when the check ran, how many titles it
+checked and how many break a rule (`checkedTitles`), with **check again**
+(`refreshCompliance`); a banner says what the report leaves out. Then how
+many titles break each rule, by the rule's tag, with their packages' size
+now and at most after (a rule lists its titles alone), and the re-encode
 queue in numbers: queued, processing, needs attention and processed again.
+Then each worker's rules as it reported them, in words with the raw config
+under details, and when, or that it never did.
+
 The titles follow, movies by default, filtered by kind, rules and a search
-("230 of 279"), the biggest package first, a hundred at a time. Each row has
-the title's findings and, under them, what processing it again does to it,
-with its package at most after ("Re-encoded, then packaged again, at most
-11.8 GB"); the size of its original and of its package today; and its
-status with the queue's reason, what the title waits for or why it failed.
-The technical part of a finding or of the queue's reason, a codec's id or a
-tool's output, is under the row's details, never in its lines. A title that
-processing again can't help (`reworkBlocked`) is promised nothing: in place
-of the outcome it says why ("Can’t be processed again: its file is a disc
-image."), with no estimate.
+("230 of 279"), a hundred at a time, a row each with its measures in
+columns: the title, the video's resolution, codec and bit rate ("≈" where it
+is worked out from the size and the duration), the transcoder's cap for its
+kind and height, the sizes of its original, its package, its package at most
+after and the saving, the package's audio (the original's on hover), the
+rules it breaks as tags ("bit rate > cap", "copy > 15 GiB", the size cap as
+the transcoder reported it), what processing it again does ("re-encode",
+"repackage", "first package", or "blocked" for a title it can't help,
+`reworkBlocked`), and its status with the queue's reason. Numbers sit to the
+right in figures of one width. A row's details open under it: each finding
+in katalog-manager's words with its technical part (a codec's id, a tool's
+output), why it is blocked, the queue's technical part and the original's
+audio. The headers of the title, the bit rate, the original, the package
+(the first order, the biggest first) and the saving sort the report on
+katalog-manager (`sort`, `descending`): the pages and the CSV come in the
+same order. **download csv** saves every title the filter matches, in that
+order, from katalog-manager's `GET /api/manage/compliance.csv`, named by the
+kind and when the check ran (`rules-movies-2026-10-26T1343.csv`). The
+filters and the table take more of a wide screen than the column above them;
+on a narrow one the table scrolls sideways, its checkboxes and titles in
+view.
 
 A title is processed again from its row (**process again**), several by
 ticking them, or every title that matches: the header checkbox ticks the
@@ -99,13 +113,14 @@ Sizes are written as chino's downloads write them: decimal units, GB with
 one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
 1,000 GB.
 
-It needs a katalog-manager with `libraryCompliance` (with `matching`,
-`queueable`, `queue`, the rows' `queueReason`, `queueDetail` and
-`reworkBlocked`, and the `detail` of each finding and of each rule),
-`queueRework` and `queueReworkMatching` (with `skippedTitles`, `queuedText`,
-`alreadyText` and `notQueuedText`) and `refreshCompliance`: against an older
-one the tab says that the catalog service on the server has no rules check,
-and the rest of the console works.
+It needs a katalog-manager with `libraryCompliance` (with `sort` and
+`descending`, `checkedTitles`, `matching`, `queueable`, `queue`, the rows'
+measures, `outcome`, `queueReason`, `queueDetail` and `reworkBlocked`, and
+the `detail` of each finding and of each rule), `GET
+/api/manage/compliance.csv`, `queueRework` and `queueReworkMatching` (with
+`skippedTitles`, `queuedText`, `alreadyText` and `notQueuedText`) and
+`refreshCompliance`: against an older one the tab says that the catalog
+service on the server has no rules check, and the rest of the console works.
 
 ## Track languages
 
@@ -148,8 +163,9 @@ npm test             # unit tests of the pure helpers (node --test; Node 22.18+ 
 
 The harness runs the console as catalog management in a browser with no
 cluster, no Keycloak and no katalog-manager: a stand-in for katalog-manager's
-GraphQL with made-up titles, and a stub of `react-oidc-context` that signs an
-administrator in. The build never reads it.
+GraphQL and the report's CSV with made-up titles, and a stub of
+`react-oidc-context` that signs an administrator in. The build never reads
+it.
 
 ```sh
 node harness/mock-server.mjs &            # the stand-in on :8793 (MOCK_PORT)
