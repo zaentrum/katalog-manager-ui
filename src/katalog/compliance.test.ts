@@ -62,7 +62,9 @@ import {
   selectedCount,
   selectionText,
   signedSizeText,
-  estimateText,
+  ESTIMATE,
+  localWindow,
+  refusedMatching,
   deletesOriginals,
   originalsAre,
   PROCESS_WORDS,
@@ -210,11 +212,8 @@ test('the measures in figures: bit rates in Mbit/s, an estimated one marked, the
   assert.equal(signedSizeText(64.6 * GB), `64.6${NB}GB`);
   assert.equal(signedSizeText(0), `0${NB}MB`);
   assert.equal(signedSizeText(null), '—');
-  // the estimate, and the saving worked out of it, marked as estimates
-  assert.equal(estimateText(11.9 * GB), `≈${NB}11.9${NB}GB`);
-  assert.equal(estimateText(4.6 * GB - 6.144 * GB, true), `≈${NB}−1.5${NB}GB`);
-  assert.equal(estimateText(null), '—');
-  assert.equal(estimateText(null, true), '—');
+  // the estimates are marked once, in their headers, not in their cells
+  assert.deepEqual(ESTIMATE, { after: `≈${NB}after`, saving: `≈${NB}saving`, tip: 'Estimated: the package’s size after processing again' });
 });
 
 test('a finding in words for the row’s details: katalog-manager’s sentence, else what was measured against the limit', () => {
@@ -434,76 +433,82 @@ test('the bulk button, the confirm’s title and its button name the count', () 
   assert.equal(processLabel(2409), 'process 2,409 titles again');
 });
 
-const keep = { originals: 'keep', inflight: 4, window: '23:00-07:00' };
+const keep = { originals: 'keep', inflight: 4, window: null };
+const deleted = { originals: 'delete-after-package', inflight: 4, window: null };
 
-test('the confirm’s body as this installation processes titles: the queue’s pace and window, and what becomes of the original', () => {
+test('the confirm’s body, in the UX session’s words, as this installation processes titles', () => {
   assert.equal(
     confirmBody(12, keep),
-    'Each title is processed again from its original, with today’s settings, up to 4 at a time between 23:00 and 07:00. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
+    'Each title is processed again from its original, with today’s settings, 4 at a time. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
   );
   assert.equal(
     confirmBody(1, keep),
-    'The title is processed again from its original, with today’s settings, between 23:00 and 07:00. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
+    'The title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
   );
-  // the pace as far as it is known, and no window while there is none
-  assert.equal(PROCESS_WORDS.pace(1), 'one at a time');
-  assert.equal(PROCESS_WORDS.pace(null), 'a few at a time');
-  assert.equal(PROCESS_WORDS.when(null), '');
-  assert.equal(PROCESS_WORDS.when('22:30 – 06:00'), 'between 22:30 and 06:00');
-  assert.equal(PROCESS_WORDS.when('nights'), '');
-  assert.equal(
-    confirmBody(3, { originals: 'keep', inflight: null, window: null }),
-    'Each title is processed again from its original, with today’s settings, a few at a time. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
-  );
-  // the original deleted once the new version is complete: said, and the danger button
-  const deleted = { originals: 'delete-after-package', inflight: 2, window: null };
   assert.equal(
     confirmBody(12, deleted),
-    'Each title is processed again from its original, with today’s settings, up to 2 at a time. Its current version keeps playing until the new one is ready. Once the new version is complete, its original is deleted.',
+    'Each title is processed again from its original, with today’s settings, 4 at a time. Its current version keeps playing until the new one is ready. Then the original is deleted, as this server is set to do, and can’t be brought back.',
   );
   assert.equal(
     confirmBody(1, deleted),
-    'The title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready. Once the new version is complete, the original is deleted.',
+    'The title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready. Then the original is deleted, as this server is set to do, and can’t be brought back.',
   );
   assert.equal(deletesOriginals(deleted), true);
   assert.equal(deletesOriginals(keep), false);
+  // the pace as the queue's inflight is, and left out while it isn't known
+  assert.equal(PROCESS_WORDS.pace(1), ', 1 at a time');
+  assert.equal(PROCESS_WORDS.pace(0), '');
+  assert.equal(
+    confirmBody(3, { ...keep, inflight: null }),
+    'Each title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
+  );
   // a setting the console doesn't know, or none: no word on the original, nor danger
   assert.equal(originalsAre({ originals: 'archive' }), 'unknown');
   assert.equal(originalsAre(null), 'unknown');
   assert.equal(
     confirmBody(2, null),
-    'Each title is processed again from its original, with today’s settings, a few at a time. Its current version keeps playing until the new one is ready.',
+    'Each title is processed again from its original, with today’s settings. Its current version keeps playing until the new one is ready.',
   );
   assert.equal(deletesOriginals(null), false);
 });
 
-test('the confirm’s facts: the one title’s name, the packages now and about after, and those without an estimate', () => {
-  assert.deepEqual(confirmFacts(rowsScope([a])), [
-    { label: 'title', value: 'Vellmar Station (2019)', note: null },
-    { label: 'package', value: `59${NB}GB now, about 12${NB}GB after`, note: null },
+test('the queue’s window, in the viewer’s time, before the first sentence’s full stop, of one title too', () => {
+  const cet = 60; // minutes east of UTC
+  assert.equal(
+    confirmBody(12, { ...keep, window: '00:00Z-05:00Z' }, cet),
+    'Each title is processed again from its original, with today’s settings, 4 at a time, between 01:00 and 06:00. Its current version keeps playing until the new one is ready, and the original isn’t changed.',
+  );
+  assert.equal(
+    confirmBody(1, { ...deleted, window: '00:00Z-05:00Z' }, cet),
+    'The title is processed again from its original, with today’s settings, between 01:00 and 06:00. Its current version keeps playing until the new one is ready. Then the original is deleted, as this server is set to do, and can’t be brought back.',
+  );
+  // its zone given each way, and across midnight
+  assert.equal(localWindow('23:00+01:00-07:00+01:00', -300), 'between 17:00 and 01:00');
+  assert.equal(localWindow('22:00-06:00 UTC', cet), 'between 23:00 and 07:00');
+  assert.equal(localWindow('22:00Z – 06:00Z', 0), 'between 22:00 and 06:00');
+  // no zone: as it is written
+  assert.equal(localWindow('23:00-07:00', -300), 'between 23:00 and 07:00');
+  assert.equal(localWindow('1:00-6:00', cet), 'between 01:00 and 06:00');
+  // none, or one the console can't read
+  for (const w of [null, '', 'nights', '25:00-07:00']) assert.equal(localWindow(w, cet), '', String(w));
+});
+
+test('the confirm’s facts, in the UX session’s words: the packages now and about after, and those with no estimate', () => {
+  assert.deepEqual(confirmFacts(rowsScope([row({ packageBytes: 78.8 * GB, estimatedBytes: 11.9 * GB })])), [
+    { label: 'title', value: 'Vellmar Station (2019)' },
+    { label: 'package', value: `78.8${NB}GB now, about 11.9${NB}GB after` },
   ]);
   const two = rowsScope([a, row({ itemId: 'b', packageBytes: 41 * GB, estimatedBytes: null })]);
   assert.deepEqual(two, { titles: 2, name: null, packageBytes: 100 * GB, estimatedBytes: 12 * GB, withoutEstimate: 1 });
-  assert.deepEqual(confirmFacts(two), [
-    { label: 'packages', value: `100${NB}GB now, about 12${NB}GB after`, note: '1 title without an estimate' },
-  ]);
+  assert.deepEqual(confirmFacts(two), [{ label: 'packages', value: `100${NB}GB now, about 12${NB}GB after; 1 title has no estimate` }]);
   // every match: the report's totals over all of them the queue would take
-  const all = matchingScope({ titles: 248, originalBytes: 9e12, packageBytes: 5.93e12, estimatedBytes: 1.3e12, withoutEstimate: 12 });
+  const all = matchingScope({ titles: 248, originalBytes: 9e12, packageBytes: 5.93e12, estimatedBytes: 1.3e12, withoutEstimate: 3, fingerprint: 'x' });
   assert.equal(all.titles, 248);
-  assert.deepEqual(confirmFacts(all), [
-    { label: 'packages', value: `5.9${NB}TB now, about 1.3${NB}TB after`, note: '12 titles without an estimate' },
-  ]);
-  // never packaged: about after only; one with no estimate: now, and that it has none
-  assert.deepEqual(confirmFacts(rowsScope([row({ packageBytes: null })])).at(-1), {
-    label: 'package',
-    value: `about 12${NB}GB after`,
-    note: null,
-  });
-  assert.deepEqual(confirmFacts(rowsScope([row({ estimatedBytes: null })])).at(-1), {
-    label: 'package',
-    value: `59${NB}GB now`,
-    note: 'no estimate after',
-  });
+  assert.deepEqual(confirmFacts(all), [{ label: 'packages', value: `5.9${NB}TB now, about 1.3${NB}TB after; 3 titles have no estimate` }]);
+  assert.deepEqual(confirmFacts({ ...all, withoutEstimate: 0 }), [{ label: 'packages', value: `5.9${NB}TB now, about 1.3${NB}TB after` }]);
+  // no package: about after only; no estimate: now, and none
+  assert.deepEqual(confirmFacts(rowsScope([row({ packageBytes: null, estimatedBytes: 7.1 * GB })])).at(-1), { label: 'package', value: `about 7.1${NB}GB after` });
+  assert.deepEqual(confirmFacts(rowsScope([row({ packageBytes: 78.8 * GB, estimatedBytes: null })])).at(-1), { label: 'package', value: `78.8${NB}GB now; no estimate` });
   assert.equal(nowAndAfter(59 * GB, null), `59${NB}GB now`);
   assert.equal(nowAndAfter(null, null), '');
   assert.deepEqual(confirmFacts({ titles: 3, name: null, packageBytes: 0, estimatedBytes: null, withoutEstimate: 0 }), []);
@@ -556,6 +561,14 @@ test('a server that counts without saying it gets the toasts in the same words f
 
 const ruddlow = { itemId: 'm2', title: 'Ruddlow Hill (1991)', reason: 'its original was deleted after packaging' };
 const tarsby = { itemId: 'm7', title: 'Tarsby Road (2008)', reason: 'its original was deleted after packaging' };
+
+test('a request for every match refused, as the matches changed: the toolbar offers them again', () => {
+  assert.equal(refusedMatching(result({ notQueuedText: 'Nothing was queued: the matching titles changed, from 40 to 42.' })), true);
+  assert.equal(refusedMatching(result({ notQueuedText: 'Nothing was queued: the matching titles changed.' })), true);
+  assert.equal(refusedMatching(result({ queued: 40, queuedText: '40 titles queued to be processed again' })), false);
+  assert.equal(refusedMatching(result({ alreadyQueued: 1, alreadyText: '1 title already in the queue', notQueuedText: null })), false);
+  assert.equal(refusedMatching(result({})), false);
+});
 
 test('titles the queue didn’t take are a warning banner in katalog-manager’s words, each one and why under details', () => {
   assert.deepEqual(

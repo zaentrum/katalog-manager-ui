@@ -46,7 +46,7 @@ import {
   deletesOriginals,
   dispositionName,
   emptyState,
-  estimateText,
+  ESTIMATE,
   filterKey,
   filterVariables,
   fmtBitrate,
@@ -79,7 +79,9 @@ import {
   savingBytes,
   select,
   selectedCount,
+  refusedMatching,
   selectionText,
+  signedSizeText,
   sizeText,
   staleText,
   titlesOf,
@@ -110,7 +112,7 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     }
     notEvaluated evaluatedAt evaluating
     matching { titles originalBytes packageBytes estimatedBytes withoutEstimate }
-    queueable { titles originalBytes packageBytes estimatedBytes withoutEstimate }
+    queueable { titles originalBytes packageBytes estimatedBytes withoutEstimate fingerprint }
     queue { queued processing processed failed }
     processing { originals inflight window }
     summary { rule titles packageBytes estimatedBytes }
@@ -128,10 +130,11 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
 const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { checkedTitles matching { titles } } }`;
 const QUEUED = `queued alreadyQueued skipped skippedTitles { itemId title reason } message queuedText alreadyText notQueuedText`;
 const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { ${QUEUED} } }`;
-// expected: as many titles as the confirm named; katalog-manager queues
-// none when the filter matches another number by then
-const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $expected: Int!) {
-  queueReworkMatching(kind: $kind, rules: $rules, search: $search, expected: $expected) { ${QUEUED} }
+// expected and fingerprint: the titles the confirm named, their number and
+// their set's; katalog-manager queues none when the filter matches others
+// by then
+const QUEUE_MATCHING = `mutation($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $expected: Int!, $fingerprint: String!) {
+  queueReworkMatching(kind: $kind, rules: $rules, search: $search, expected: $expected, fingerprint: $fingerprint) { ${QUEUED} }
 }`;
 const CHECK = `mutation($kind: ComplianceKind) { refreshCompliance(kind: $kind) }`;
 
@@ -142,6 +145,8 @@ interface Processing {
   scope: ProcessScope;
   items: string[];
   matching: ComplianceFilter | null;
+  // the set of every match the confirm named, as the report fingerprinted it
+  fingerprint: string;
   // from the selection toolbar: once queued, the selection is cleared
   bulk: boolean;
   settings: ComplianceProcessing | null;
@@ -321,6 +326,10 @@ export function RulesView() {
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+  // every match refused, as it changed since the confirm: once the list is
+  // read again, its rows on the screen are ticked, so the toolbar offers
+  // every match as it is now
+  const reoffer = useRef(false);
   const toasts = useToasts();
   const toolbar = useRef<HTMLDivElement>(null);
   const searchField = useRef<HTMLInputElement>(null);
@@ -334,6 +343,11 @@ export function RulesView() {
   // rows read again: ticked rows as they are now
   useEffect(() => {
     dispatch({ type: 'loaded', rows });
+    if (reoffer.current) {
+      reoffer.current = false;
+      dispatch({ type: 'clear' });
+      dispatch({ type: 'page', on: true, rows });
+    }
   }, [rows]);
 
   // read again by itself while a check runs or the queue holds titles
@@ -383,6 +397,7 @@ export function RulesView() {
       setProblem(notQueued ? { state: 'warning', text: notQueued.text, detail: notQueued.detail, retry: false } : null);
       for (const t of queuedToasts(r)) pushToast(t);
       if (p.bulk) dispatch({ type: 'clear' });
+      if (p.matching && refusedMatching(r)) reoffer.current = true;
       // the button that opened the dialog goes with the selection, or turns
       // disabled once the queue holds its title: the toolbar, or the title,
       // takes the focus instead
@@ -492,7 +507,8 @@ export function RulesView() {
   const counts = checkCounts(all.data?.libraryCompliance.checkedTitles, all.data?.libraryCompliance.matching.titles);
 
   const settings = report.processing;
-  const open = (p: Omit<Processing, 'settings'>) => setProcessing({ ...p, settings });
+  const fingerprint = report.queueable.fingerprint ?? '';
+  const open = (p: Omit<Processing, 'settings' | 'fingerprint'>) => setProcessing({ ...p, settings, fingerprint });
   function processSelection() {
     if (!report) return;
     if (sel.mode === 'matching') {
@@ -571,14 +587,15 @@ export function RulesView() {
     { key: 'cap', header: 'cap', align: 'right', render: (r) => num(fmtBitrate(r.bitrateCap)) },
     { key: 'original', header: 'original', align: 'right', sort: 'ORIGINAL_SIZE', render: (r) => num(sizeText(r.originalBytes)) },
     { key: 'package', header: 'package', align: 'right', sort: 'PACKAGE_SIZE', render: (r) => num(sizeText(r.packageBytes)) },
-    { key: 'after', header: '≈ after', align: 'right', render: (r) => num(isBlocked(r) ? '—' : estimateText(r.estimatedBytes)) },
+    // estimates: the mark once, in the header
+    { key: 'after', header: ESTIMATE.after, headerTitle: ESTIMATE.tip, align: 'right', render: (r) => num(isBlocked(r) ? '—' : sizeText(r.estimatedBytes)) },
     {
       key: 'saving',
-      header: 'saving',
+      header: ESTIMATE.saving,
       align: 'right',
       sort: 'SAVING',
-      sortTitle: 'package − ≈ after',
-      render: (r) => num(isBlocked(r) ? '—' : estimateText(savingBytes(r), true)),
+      sortTitle: `package − ${ESTIMATE.after}`,
+      render: (r) => num(isBlocked(r) ? '—' : signedSizeText(savingBytes(r))),
     },
     {
       key: 'audio',
@@ -910,9 +927,9 @@ function SummaryTable({
     { key: 'packageBytes', header: 'now', align: 'right', render: (s) => <span className="kat__num">{sizeText(s.packageBytes)}</span> },
     {
       key: 'estimatedBytes',
-      header: '≈ after',
+      header: <span title={ESTIMATE.tip}>{ESTIMATE.after}</span>,
       align: 'right',
-      render: (s) => <span className="kat__num">{estimateText(s.estimatedBytes)}</span>,
+      render: (s) => <span className="kat__num">{sizeText(s.estimatedBytes)}</span>,
     },
   ];
   return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense aria-label="titles by rule" />;
@@ -923,6 +940,8 @@ function SummaryTable({
 interface ResultColumn {
   key: string;
   header: ReactNode;
+  // what the header means, on hover, where it doesn't sort
+  headerTitle?: string;
   sort?: ComplianceSort;
   sortTitle?: string;
   align?: 'left' | 'right';
@@ -961,6 +980,7 @@ function ResultsTable({
                 className={c.className}
                 style={{ textAlign: c.align ?? 'left' }}
                 aria-sort={c.sort ? ariaSort(order, c.sort) : undefined}
+                title={c.sort ? undefined : c.headerTitle}
               >
                 {c.sort ? <SortButton label={c.header} sort={c.sort} order={order} title={c.sortTitle} onSort={onSort} /> : c.header}
               </Th>
@@ -1301,6 +1321,7 @@ function ProcessDialog({
             await gql<{ queueReworkMatching: ComplianceQueued }>(QUEUE_MATCHING, {
               ...filterVariables(processing.matching),
               expected: processing.scope.titles,
+              fingerprint: processing.fingerprint,
             })
           ).queueReworkMatching
         : (await gql<{ queueRework: ComplianceQueued }>(QUEUE_ITEMS, { items: processing.items })).queueRework;
@@ -1339,10 +1360,7 @@ function ProcessDialog({
             {facts.map((f) => (
               <Fragment key={f.label}>
                 <dt>{f.label}</dt>
-                <dd className="kat__mono">
-                  {f.value}
-                  {f.note && <span className="kat__confirm-note">{f.note}</span>}
-                </dd>
+                <dd className="kat__mono">{f.value}</dd>
               </Fragment>
             ))}
           </dl>

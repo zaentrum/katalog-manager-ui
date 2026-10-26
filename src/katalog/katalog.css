@@ -885,14 +885,6 @@ a.kat__rowlink:focus-visible {
 .kat__kv.kat__confirm-facts {
   grid-template-columns: max-content minmax(0, 1fr);
 }
-/* the titles with no estimate, under the packages' sizes */
-.kat__confirm-note {
-  display: block;
-  margin-top: 2px;
-  font-family: var(--ff-ui, Inter, system-ui, sans-serif);
-  font-size: 12px;
-  color: var(--fg-muted, #aeb8c2);
-}
 /* a name in a button, whose words are lowercase: "download CSV" */
 .kat__keepcase {
   text-transform: none;

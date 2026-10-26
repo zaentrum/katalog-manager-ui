@@ -85,13 +85,15 @@ export interface ComplianceSummary {
 }
 /** The totals over every title that matches the filter, not only a page:
  *  its packages now and estimated after over the same titles, and how many
- *  of them have no estimate. */
+ *  of them have no estimate; of the titles the queue would take, the set's
+ *  fingerprint too, which a request for every match names back. */
 export interface ComplianceTotals {
   titles: number;
   originalBytes: number;
   packageBytes: number;
   estimatedBytes: number | null;
   withoutEstimate: number;
+  fingerprint?: string;
 }
 /** How the re-encode queue processes titles, as this installation is set:
  *  what becomes of an original once its new version is complete
@@ -362,12 +364,13 @@ export function signedSizeText(n: number | null | undefined): string {
   return n < 0 ? `−${fmtBytes(-n)}` : fmtBytes(n);
 }
 
-/** An estimate, marked as one: "≈ 11.9 GB", "≈ −1.5 GB"; '—' for none.
- *  signed: a size that may be less than nothing. */
-export function estimateText(n: number | null | undefined, signed = false): string {
-  const size = signed ? signedSizeText(n) : sizeText(n);
-  return size === '—' ? size : `≈${NBSP}${size}`;
-}
+/** The headers of the estimates, marked once, there, and not in their
+ *  cells, the mark kept with its word; the tooltip of the size after's. */
+export const ESTIMATE = {
+  after: '≈\u00a0after',
+  saving: '≈\u00a0saving',
+  tip: 'Estimated: the package’s size after processing again',
+};
 
 /** rows, then those of more not among them (a page loaded after). */
 export function appendRows(rows: readonly ComplianceRow[], more: readonly ComplianceRow[]): ComplianceRow[] {
@@ -606,45 +609,67 @@ export function processLabel(titles: number): string {
 }
 
 /** The confirm's words that hang on how this installation processes
- *  titles, read live (ComplianceProcessing), in one place: the UX session's
- *  final words take their place.
- *  - pace: how fast the queue goes, of inflight: "up to 4 at a time", "one
- *    at a time", "a few at a time" while it isn't known;
- *  - when: the queue's window, "between 23:00 and 07:00", '' while it isn't
- *    known;
+ *  titles, read live (ComplianceProcessing), in the UX session's words, in
+ *  one place:
+ *  - pace: how many titles the queue sends at once, ", 4 at a time"; ''
+ *    while inflight isn't known;
+ *  - when: the queue's window in the viewer's local time, ", between 01:00
+ *    and 06:00", before the first sentence's full stop (localWindow);
  *  - keep, deleted, unknown: the body, of one title and of several, as
  *    library.originals keeps the original, deletes it once the new version
  *    is complete, or says something the console doesn't know (no word on
  *    the original then);
- *  - withoutEstimate: the confirm's note of the titles with no estimate. */
+ *  - noEstimate: what the facts say of the titles with no estimate. */
 export const PROCESS_WORDS = {
-  pace: (inflight: number | null | undefined): string =>
-    inflight == null || inflight < 1 ? 'a few at a time' : inflight === 1 ? 'one at a time' : `up to ${fmtCount(inflight)} at a time`,
-  when: (window: string | null | undefined): string => {
-    const m = /^\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*$/.exec(window ?? '');
-    return m ? `between ${m[1]} and ${m[2]}` : '';
-  },
+  pace: (inflight: number | null | undefined): string => (inflight != null && inflight >= 1 ? `, ${fmtCount(inflight)} at a time` : ''),
+  when: (between: string): string => (between ? `, ${between}` : ''),
   keep: {
     one: (when: string) =>
-      `The title is processed again from its original, with today’s settings${when ? `, ${when}` : ''}. Its current version keeps playing until the new one is ready, and the original isn’t changed.`,
+      `The title is processed again from its original, with today’s settings${when}. Its current version keeps playing until the new one is ready, and the original isn’t changed.`,
     several: (pace: string, when: string) =>
-      `Each title is processed again from its original, with today’s settings, ${pace}${when ? ` ${when}` : ''}. Its current version keeps playing until the new one is ready, and the original isn’t changed.`,
+      `Each title is processed again from its original, with today’s settings${pace}${when}. Its current version keeps playing until the new one is ready, and the original isn’t changed.`,
   },
   deleted: {
     one: (when: string) =>
-      `The title is processed again from its original, with today’s settings${when ? `, ${when}` : ''}. Its current version keeps playing until the new one is ready. Once the new version is complete, the original is deleted.`,
+      `The title is processed again from its original, with today’s settings${when}. Its current version keeps playing until the new one is ready. Then the original is deleted, as this server is set to do, and can’t be brought back.`,
     several: (pace: string, when: string) =>
-      `Each title is processed again from its original, with today’s settings, ${pace}${when ? ` ${when}` : ''}. Its current version keeps playing until the new one is ready. Once the new version is complete, its original is deleted.`,
+      `Each title is processed again from its original, with today’s settings${pace}${when}. Its current version keeps playing until the new one is ready. Then the original is deleted, as this server is set to do, and can’t be brought back.`,
   },
   unknown: {
     one: (when: string) =>
-      `The title is processed again from its original, with today’s settings${when ? `, ${when}` : ''}. Its current version keeps playing until the new one is ready.`,
+      `The title is processed again from its original, with today’s settings${when}. Its current version keeps playing until the new one is ready.`,
     several: (pace: string, when: string) =>
-      `Each title is processed again from its original, with today’s settings, ${pace}${when ? ` ${when}` : ''}. Its current version keeps playing until the new one is ready.`,
+      `Each title is processed again from its original, with today’s settings${pace}${when}. Its current version keeps playing until the new one is ready.`,
   },
-  withoutEstimate: (n: number, titles: number): string =>
-    titles === 1 ? 'no estimate after' : `${fmtCount(n)} ${n === 1 ? 'title' : 'titles'} without an estimate`,
+  noEstimate: (n: number, titles: number): string =>
+    titles === 1 ? 'no estimate' : `${fmtCount(n)} ${n === 1 ? 'title has' : 'titles have'} no estimate`,
 };
+
+/** The queue's window as the viewer reads it, "between 01:00 and 06:00":
+ *  each end in the viewer's time (offset: minutes east of UTC, as the
+ *  browser is) where the window gives its zone ("00:00Z-05:00Z",
+ *  "01:00+01:00-06:00+01:00", "00:00-05:00 UTC"), as written where it gives
+ *  none; '' for no window, or one the console can't read. */
+export function localWindow(window: string | null | undefined, offset: number = -new Date().getTimezoneOffset()): string {
+  const m = /^\s*(\d{1,2}):(\d{2})(Z|[+-]\d{2}:?\d{2})?\s*[-–]\s*(\d{1,2}):(\d{2})(Z|[+-]\d{2}:?\d{2})?\s*(UTC|Z)?\s*$/i.exec(window ?? '');
+  if (!m) return '';
+  const zoneOf = (z: string | undefined): number | null => {
+    if (!z) return m[7] ? 0 : null;
+    if (/^z$/i.test(z)) return 0;
+    const [, sign, h, mm] = /^([+-])(\d{2}):?(\d{2})$/.exec(z)!;
+    return (sign === '-' ? -1 : 1) * (Number(h) * 60 + Number(mm));
+  };
+  const end = (h: string, mm: string, z: string | undefined): string | null => {
+    let minutes = Number(h) * 60 + Number(mm);
+    if (Number(h) > 23 || Number(mm) > 59) return null;
+    const zone = zoneOf(z);
+    if (zone != null) minutes = (((minutes - zone + offset) % 1440) + 1440) % 1440;
+    return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  };
+  const from = end(m[1], m[2], m[3]);
+  const to = end(m[4], m[5], m[6]);
+  return from && to ? `between ${from} and ${to}` : '';
+}
 
 /** library.originals, as the confirm reads it: kept, deleted once the new
  *  version is complete, or a value the console doesn't know. */
@@ -656,9 +681,9 @@ export function originalsAre(p: Pick<ComplianceProcessing, 'originals'> | null |
 /** What the confirm says processing titles again does, of one title and of
  *  several, with the queue's pace and window and what becomes of the
  *  original, as this installation is set. */
-export function confirmBody(titles: number, p?: ComplianceProcessing | null): string {
+export function confirmBody(titles: number, p?: ComplianceProcessing | null, offset?: number): string {
   const words = PROCESS_WORDS[originalsAre(p)];
-  const when = PROCESS_WORDS.when(p?.window);
+  const when = PROCESS_WORDS.when(localWindow(p?.window, offset));
   return titles === 1 ? words.one(when) : words.several(PROCESS_WORDS.pace(p?.inflight), when);
 }
 
@@ -712,14 +737,24 @@ export function nowAndAfter(now: number | null | undefined, after: number | null
 }
 
 /** The confirm's facts under its sentence: the title, when it is one, and
- *  the packages now and estimated after, with how many have no estimate. */
-export function confirmFacts(s: ProcessScope): { label: string; value: string; note: string | null }[] {
-  const facts: { label: string; value: string; note: string | null }[] = [];
-  if (s.name) facts.push({ label: 'title', value: s.name, note: null });
+ *  the packages now and about after, with those that have no estimate:
+ *  "5.9 TB now, about 1.3 TB after; 3 titles have no estimate", "78.8 GB
+ *  now; no estimate". */
+export function confirmFacts(s: ProcessScope): { label: string; value: string }[] {
+  const facts: { label: string; value: string }[] = [];
+  if (s.name) facts.push({ label: 'title', value: s.name });
   const sizes = nowAndAfter(s.packageBytes, s.estimatedBytes);
-  const note = s.withoutEstimate > 0 ? PROCESS_WORDS.withoutEstimate(s.withoutEstimate, s.titles) : null;
-  if (sizes || note) facts.push({ label: s.titles === 1 ? 'package' : 'packages', value: sizes, note });
+  const missing = s.withoutEstimate > 0 ? PROCESS_WORDS.noEstimate(s.withoutEstimate, s.titles) : '';
+  const value = [sizes, missing].filter(Boolean).join('; ');
+  if (value) facts.push({ label: s.titles === 1 ? 'package' : 'packages', value });
   return facts;
+}
+
+/** True when a request for every match queued nothing, and katalog-manager
+ *  says why (the matches changed since the confirm, or none fits): the
+ *  toolbar offers every match again, as it is now. */
+export function refusedMatching(r: Pick<ComplianceQueued, 'queued' | 'alreadyQueued' | 'skipped' | 'notQueuedText'>): boolean {
+  return r.queued === 0 && r.alreadyQueued === 0 && r.skipped === 0 && !!r.notQueuedText?.trim();
 }
 
 /** A text of katalog-manager's, or null for none. */
