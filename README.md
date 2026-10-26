@@ -69,9 +69,10 @@ The titles follow, movies by default, filtered by kind, rules and a search
 columns: the title, the video's resolution, codec and bit rate ("≈" where it
 is worked out from the size and the duration), the transcoder's cap for its
 kind and height, the sizes of its original, its package, its package at most
-after and the saving, the package's audio (the original's on hover), the
-rules it breaks as tags ("bit rate > cap", "copy > 15 GiB", the size cap as
-the transcoder reported it), what processing it again does ("re-encode",
+after and the saving (less than nothing, with its sign, where the package
+may grow), the package's audio (the original's on hover), the rules it
+breaks as tags ("bit rate > cap", "copy > 15 GiB", the size cap as the
+transcoder reported it), what processing it again does ("re-encode",
 "repackage", "first package", or "blocked" for a title it can't help,
 `reworkBlocked`), and its status with the queue's reason. Numbers sit to the
 right in figures of one width. A row's details open under it: each finding
@@ -81,11 +82,11 @@ audio. The headers of the title, the bit rate, the original, the package
 (the first order, the biggest first) and the saving sort the report on
 katalog-manager (`sort`, `descending`): the pages and the CSV come in the
 same order. **download csv** saves every title the filter matches, in that
-order, from katalog-manager's `GET /api/manage/compliance.csv`, named by the
-kind and when the check ran (`rules-movies-2026-10-26T1343.csv`). The
-filters and the table take more of a wide screen than the column above them;
-on a narrow one the table scrolls sideways, its checkboxes and titles in
-view.
+order, from katalog-manager's `GET /api/manage/compliance.csv`, under the
+name katalog-manager gives it, of the kind and when the check ran, in UTC
+(`rules-movies-2026-10-26T1343Z.csv`). The filters and the table take more
+of a wide screen than the column above them; on a narrow one the table
+scrolls sideways, its checkboxes and titles in view.
 
 A title is processed again from its row (**process again**), several by
 ticking them, or every title that matches: the header checkbox ticks the
