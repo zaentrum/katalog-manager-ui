@@ -52,34 +52,45 @@ first, as against an older one the dialog says the field is unknown.
 
 ## Rules
 
-Catalog management's **Rules** tab is the titles that break the rules the
-pipeline's workers report (katalog-manager's `libraryCompliance`): each
-worker's rules as it reported them and when, or that it never did, and what
-the report could not check; when the titles were checked, and **check
-again** (`refreshCompliance`); how many titles break each rule, with their
-packages' size now and at most after (a rule lists its titles alone); and
-the titles, movies by default, filtered by type, rules and a search, the
-biggest package first, a page at a time. Each row has the title's findings,
-the size of its original and of its package, its package at most after, and
-its place in the re-encode queue.
+Catalog management's **Rules** tab is a worklist of the titles that break a
+rule the transcoder or the packager reports (katalog-manager's
+`libraryCompliance`). At the top, each worker's rules as it reported them and
+when, or that it never did, and when the titles were checked, with **check
+again** (`refreshCompliance`); a banner says what the report leaves out. Then
+how many titles break each rule, with their packages' size now and at most
+after (a rule lists its titles alone), and the re-encode queue in numbers:
+queued, processing, needs attention and processed again. The titles follow,
+movies by default, filtered by kind, rules and a search ("230 of 279"),
+the biggest package first, a hundred at a time. Each row has the title's
+findings and what processing it again does to it ("Re-encoded, then packaged
+again", "Packaged again; the video is copied", "Packaged for the first
+time"), the size of its original and of its package, the package at most
+after, and its status.
 
-A title is reworked from its row, several by ticking them, or every title
-that matches: the header checkbox ticks the rows shown, then offers every
-match. A rework asks first, the same for one title and many: how many, their
-sizes now and at most after (those of every match counted a page at a time
-when more match than are shown), that they go through the re-encode queue at
-its own pace (its settings `library.reencode.rate`, `.inflight` and
-`.window` and the sweep's interval, as far as they are set; what the queue
-holds and why it sends none now), and what plays meanwhile, as Re-encode
-says. The titles are queued with `queueRework`, or every match with
-`queueReworkMatching` and the filter, and the tab says how many were queued,
-queued already and skipped. A title the queue holds already is neither
-ticked nor reworked again. A change of the filter clears the selection.
+A title is processed again from its row (**process again**), several by
+ticking them, or every title that matches: the header checkbox ticks the
+rows on the screen, and the toolbar then offers to select all that match,
+with their count. A filter change keeps the rows ticked and counts those it
+hides; a selection of every match goes with its filter. A title the queue
+holds, queued or processing, can't be ticked. One confirm asks first, the
+same for one title and many, titled with the button's words ("process 12
+titles again"): each title is processed again from its original with
+today's settings, one after another; its current version plays until the new
+one is ready; the original isn't changed; and their packages now and at most
+after, every match's from the report's totals (`matching`). The titles go to
+the re-encode queue with `queueRework`, or every match with
+`queueReworkMatching` and the filter, and a toast counts them, then those the
+queue held already and those skipped. A title processed again that follows
+the rules leaves the list and counts as processed again.
 
-It needs a katalog-manager with `libraryCompliance`, `queueRework`,
-`queueReworkMatching` and `refreshCompliance`: against an older one the tab
-says the catalog does not check its rules yet, and the rest of the console
-works.
+Sizes are written as chino's downloads write them: decimal units, GB with
+one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
+1,000 GB.
+
+It needs a katalog-manager with `libraryCompliance` (with `matching` and
+`queue`), `queueRework`, `queueReworkMatching` and `refreshCompliance`:
+against an older one the tab says that this katalog-manager has no rules
+check, and the rest of the console works.
 
 ## Track languages
 
@@ -133,9 +144,9 @@ npx vite --config harness/vite.config.ts  # the console on :8794 (HARNESS_PORT)
 http://localhost:8794/katalog-manage/rules is the rules tab; `?mock=` plays
 its other states: `empty` (every title follows the rules), `never` (never
 checked), `checking`, `unreported` (the transcoder never reported its
-rules), `unset` (none of the queue's settings set), `old` (a katalog-manager
-without the report) and `down` (it answers 502). The stand-in keeps what is
-queued in memory; restart it for the seeded state.
+rules), `old` (a katalog-manager without the report) and `down` (it answers
+502). The stand-in keeps what is queued in memory; restart it for the seeded
+state.
 
 ## Container
 
