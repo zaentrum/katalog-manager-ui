@@ -36,13 +36,15 @@ export function isLanguageCode(s: string): boolean {
 
 /** What people call the language a code names: "No dialogue" for zxx,
  *  "Unknown" for und and for none, otherwise its name in the locales
- *  ("German" for ger or deu), or the code itself when it names none known. */
+ *  ("German" for ger or deu; with a region or a script the language first,
+ *  "Portuguese (Brazil)", never "Brazilian Portuguese"), or the code itself
+ *  when it names none known. */
 export function languageName(code: string | null | undefined, locales: readonly string[] = ['en']): string {
   const c = (code ?? '').trim().toLowerCase();
   if (c === NO_DIALOGUE) return 'No dialogue';
   if (c === '' || c === UNKNOWN) return 'Unknown';
   try {
-    const name = new Intl.DisplayNames([...locales], { type: 'language', fallback: 'none' }).of(c);
+    const name = new Intl.DisplayNames([...locales], { type: 'language', languageDisplay: 'standard', fallback: 'none' }).of(c);
     if (name) return name;
   } catch {
     /* a code Intl refuses */

@@ -26,6 +26,9 @@ test('zxx is no dialogue, und and none unknown, any other code its name', () => 
   assert.equal(languageName('deu'), 'German');
   assert.equal(languageName('FRE'), 'French');
   assert.equal(languageName('qqq'), 'qqq');
+  // a region or a script: the language first, the standard form
+  assert.equal(languageName('pt-BR'), 'Portuguese (Brazil)');
+  assert.equal(languageName('zh-Hans'), 'Chinese (Simplified)');
 });
 
 test('the table writes a language with its code', () => {
