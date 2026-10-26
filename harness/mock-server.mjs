@@ -12,6 +12,7 @@
 //   unreported  the transcoder never reported its rules: its caps are not checked
 //   old         a katalog-manager without the report: graph-gophers' validation errors
 //   down        katalog-manager answers 502
+//   delete      library.originals deletes an original once its new version is complete
 // GET /api/manage/compliance.csv answers the same report as a CSV. It keeps
 // the queue in memory; restart it for the seeded state.
 import { createServer } from 'node:http';
@@ -454,6 +455,7 @@ function compliance(vars, scenario) {
       originalBytes: rows.reduce((s, r) => s + r.originalBytes, 0),
       packageBytes: rows.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
       estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
+      withoutEstimate: rows.length - estimated.length,
     };
   };
   return {
@@ -469,6 +471,12 @@ function compliance(vars, scenario) {
     matching: totals(matching),
     queueable: totals(matching.filter(queueable)),
     queue: queueCounts(),
+    // how the queue processes titles, as the settings say
+    processing: {
+      originals: scenario === 'delete' ? 'delete-after-package' : 'keep',
+      inflight: Number(settingOf('library.reencode.inflight')) || null,
+      window: settingOf('library.reencode.window'),
+    },
     summary,
     rows: matching.slice(offset, offset + first),
     nextCursor: offset + first < matching.length ? `o:${offset + first}` : null,
@@ -538,6 +546,7 @@ const SETTINGS = [
   setting('3', 'library.reencode.window', '23:00-07:00', 'string', 'when the re-encode queue is sent'),
   setting('4', 'tmdb.api_key', null, 'string', null),
 ];
+const settingOf = (key) => SETTINGS.find((x) => x.key === key)?.valueText ?? null;
 const POLICY = { available: true, automatic: true, reason: null, maxAttempts: 3, backoffSeconds: 60, backoffMaxSeconds: 3600, intervalSeconds: 30 };
 
 function reencodeQueue() {
@@ -556,8 +565,15 @@ function reencodeQueue() {
 function answer(query, vars, scenario) {
   const data = {};
   if (/\bqueueReworkMatching\s*\(/.test(query)) {
-    // exactly the matches queueable sums up
+    // exactly the matches queueable sums up, and none when they are another
+    // number than the console named (expected)
     const ids = new Set(matchingOf(asked(vars, scenario), vars).filter(queueable).map((r) => r.itemId));
+    if (vars.expected != null && vars.expected !== ids.size) {
+      const changed = `Nothing was queued: the matching titles changed from ${fmt(vars.expected)} to ${fmt(ids.size)}.`;
+      data.queueReworkMatching = { queued: 0, alreadyQueued: 0, skipped: 0, skippedTitles: [], message: changed,
+        queuedText: null, alreadyText: null, notQueuedText: changed };
+      return { data };
+    }
     data.queueReworkMatching = enqueue(library.filter((r) => ids.has(r.itemId)), [], 'no title fits the filter anymore');
     return { data };
   }
@@ -602,10 +618,13 @@ function answer(query, vars, scenario) {
 // the report as katalog-manager's CSV serves it: every title the filter
 // matches, in its order, a line each, named by the kind and when the check
 // ran, in UTC
-const CSV_COLUMNS = ['item_id', 'kind', 'title', 'year', 'series', 'season', 'episode', 'resolution', 'video_codec',
+const CSV_COLUMNS = ['item_id', 'kind', 'title', 'year', 'series', 'season', 'episode', 'width', 'height', 'video_codec',
   'video_bitrate_bps', 'bitrate_estimated', 'bitrate_cap_bps', 'size_cap_bytes', 'duration_s', 'original_bytes',
   'package_bytes', 'estimated_bytes', 'package_audio', 'original_audio', 'rules', 'outcome', 'blocked_reason', 'queue',
   'checked_at'];
+const QUEUE_ENUM = { queued: 'QUEUED', sent: 'PROCESSING', failed: 'NEEDS_ATTENTION' };
+// a text a spreadsheet would take for a formula starts with a quote
+const text = (v) => (v != null && /^[=+\-@\t\r]/.test(String(v)) ? `'${v}` : v);
 const csvName = (kind) => {
   const what = kind === 'MOVIE' ? 'movies' : kind === 'EPISODE' ? 'episodes' : 'all';
   const at = new Date(evaluatedAt).toISOString();
@@ -618,11 +637,11 @@ const cell = (v) => {
 const whole = (n) => (n == null ? null : Math.round(n));
 function csvOf(rows) {
   const lines = rows.map((r) =>
-    [r.itemId, r.kind, r.title, r.year, r.seriesTitle, r.season, r.episode, r.resolution, r.videoCodec, whole(r.videoBitrate),
-      r.videoBitrateEstimated, whole(r.bitrateCap), whole(r.sizeCap), r.durationSeconds, whole(r.originalBytes),
-      whole(r.packageBytes), whole(r.estimatedBytes), r.packageAudio, r.originalAudio,
-      [...new Set(r.findings.map((f) => f.rule))].join(';'), r.outcome, r.blocked ? BLOCKED[r.blocked].one : null, r.queue,
-      new Date(r.evaluatedAt).toISOString().replace(/\.\d+Z$/, 'Z')].map(cell).join(','),
+    [r.itemId, r.kind, text(r.title), r.year, text(r.seriesTitle), r.season, r.episode, ...(r.resolution ?? '×').split('×').map((n) => n || null),
+      r.videoCodec, whole(r.videoBitrate), r.videoBitrateEstimated, whole(r.bitrateCap), whole(r.sizeCap), r.durationSeconds,
+      whole(r.originalBytes), whole(r.packageBytes), whole(r.estimatedBytes), text(r.packageAudio), text(r.originalAudio),
+      [...new Set(r.findings.map((f) => f.rule))].join(';'), r.outcome, text(r.blocked ? BLOCKED[r.blocked].one : null),
+      QUEUE_ENUM[r.queue] ?? null, new Date(r.evaluatedAt).toISOString().replace(/\.\d+Z$/, 'Z')].map(cell).join(','),
   );
   return [CSV_COLUMNS.join(','), ...lines].join('\r\n') + '\r\n';
 }
