@@ -1034,24 +1034,41 @@ export function staleText(loadedAt: number | null, now: number): string {
   return when ? `Couldn’t refresh the list; it shows what was loaded ${when}.` : 'Couldn’t refresh the list.';
 }
 
-/** Where the report's check stands: a check running, checked (evaluatedAt
- *  says when), or never checked. */
-export function checkState(r: Pick<ComplianceReport, 'evaluating' | 'evaluatedAt'>): 'checking' | 'checked' | 'never' {
-  return r.evaluating ? 'checking' : r.evaluatedAt ? 'checked' : 'never';
+/** True once the check has looked at a title. The report's evaluatedAt is
+ *  of the filter's kind and search alone, none when a search matches no
+ *  title, so the unfiltered read's count (checkedTitles, of every title)
+ *  says; until that read is in, a search typed means it has, as a search is
+ *  typed only into the filters of a list the check has looked at. */
+export function everChecked(
+  r: Pick<ComplianceReport, 'evaluatedAt'>,
+  checkedTitles: number | null | undefined,
+  f: Pick<ComplianceFilter, 'search'>,
+): boolean {
+  if (r.evaluatedAt) return true;
+  return checkedTitles != null ? checkedTitles > 0 : !!f.search.trim();
+}
+
+/** Where the check stands: a check running, checked (of the report's titles,
+ *  or of others, ever: everChecked), or never checked. */
+export function checkState(r: Pick<ComplianceReport, 'evaluating' | 'evaluatedAt'>, ever = !!r.evaluatedAt): 'checking' | 'checked' | 'never' {
+  return r.evaluating ? 'checking' : ever ? 'checked' : 'never';
 }
 
 /** What takes the table's place when no title is listed, by what is true:
- *  never checked (and no check running), no match for the search and the
- *  rules picked, or nothing breaking the rules (those checked, when some
- *  aren't); null while the first check runs, which the facts line says. */
+ *  never checked (ever: no title, everChecked; and no check running), no
+ *  match for the search and the rules picked, or for the filter at all
+ *  (checked titles, none of its kind and search), or nothing breaking the
+ *  rules (those checked, when some aren't); null while the first check runs,
+ *  which the facts line says. */
 export function emptyState(
   r: Pick<ComplianceReport, 'evaluating' | 'evaluatedAt' | 'notEvaluated'>,
   f: ComplianceFilter,
+  ever = !!r.evaluatedAt,
 ): { kind: 'unknown' | 'nomatch' | 'done'; title: string; text: string } | null {
-  if (!r.evaluatedAt) {
+  if (!ever) {
     return r.evaluating ? null : { kind: 'unknown', title: 'not checked', text: 'The titles haven’t been checked against the rules.' };
   }
-  if (f.search.trim() || f.rules.length) {
+  if (!r.evaluatedAt || f.search.trim() || f.rules.length) {
     return { kind: 'nomatch', title: 'no matches', text: 'Nothing in this list matches the search and filters.' };
   }
   const every = f.kind === 'MOVIE' ? 'Every movie' : f.kind === 'EPISODE' ? 'Every episode' : 'Every title';

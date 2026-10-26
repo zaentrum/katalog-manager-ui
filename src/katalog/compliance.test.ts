@@ -25,6 +25,7 @@ import {
   csvUrl,
   dispositionName,
   emptyState,
+  everChecked,
   filterKey,
   filterVariables,
   findingText,
@@ -811,6 +812,28 @@ test('the check is running, done, or never ran', () => {
   assert.equal(checkState({ evaluating: true, evaluatedAt: null }), 'checking');
   assert.equal(checkState({ evaluating: false, evaluatedAt: '2026-10-26T08:00:00Z' }), 'checked');
   assert.equal(checkState({ evaluating: false, evaluatedAt: null }), 'never');
+});
+
+test('a search that matches no title has no check time of its own, and the check has run all the same', () => {
+  // katalog-manager's evaluatedAt is of the filter's kind and search: none
+  // here; the unfiltered read counts every title checked
+  const none = { evaluating: false, evaluatedAt: null, notEvaluated: [] };
+  const search = { ...DEFAULT_FILTER, search: 'zzz' };
+  assert.equal(everChecked(none, 4826, search), true);
+  assert.equal(checkState(none, everChecked(none, 4826, search)), 'checked');
+  assert.deepEqual(emptyState(none, search, true), {
+    kind: 'nomatch',
+    title: 'no matches',
+    text: 'Nothing in this list matches the search and filters.',
+  });
+  // a kind none of whose titles was checked: no matches too
+  assert.equal(emptyState(none, DEFAULT_FILTER, true)?.kind, 'nomatch');
+  // the report's own time, whatever the unfiltered read says
+  assert.equal(everChecked({ evaluatedAt: '2026-10-26T08:00:00Z' }, undefined, DEFAULT_FILTER), true);
+  // until the unfiltered read is in, a search is typed only into the filters
+  // of a list the check has looked at
+  assert.equal(everChecked(none, null, search), true);
+  assert.equal(everChecked(none, undefined, search), true);
 });
 
 test('with no title listed, the table’s place says which kind of empty it is', () => {

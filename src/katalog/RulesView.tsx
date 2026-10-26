@@ -48,6 +48,7 @@ import {
   dispositionName,
   emptyState,
   ESTIMATE,
+  everChecked,
   filterKey,
   filterVariables,
   fmtBitrate,
@@ -137,8 +138,10 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
   }
 }`;
 // Every title the check looked at and every one that breaks a rule, whatever
-// the filter: the check's line and the filter bar's "230 of 279".
-const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { checkedTitles matching { titles } } }`;
+// the filter: the check's line and the filter bar's "230 of 279"; and when it
+// looked, for the check's line while no title is of the filter's kind and
+// search
+const ALL_Q = `query RulesAll { libraryCompliance(first: 1) { checkedTitles evaluatedAt matching { titles } } }`;
 const QUEUED = `queued alreadyQueued skipped skippedTitles { itemId title reason } message queuedText alreadyText notQueuedText`;
 const QUEUE_ITEMS = `mutation($items: [ID!]!) { queueRework(items: $items) { ${QUEUED} } }`;
 // expected and fingerprint: the titles the confirm named, their number and
@@ -337,7 +340,7 @@ export function RulesView() {
   const key = filterKey(filter);
   const [order, setOrder] = useState<ComplianceOrder>(DEFAULT_ORDER);
   const { report, rows, unestimated, error, loadedAt, loading, refresh, more, poll } = useReport(filter, order);
-  const all = useQuery<{ libraryCompliance: { checkedTitles: number | null; matching: { titles: number } } }>(ALL_Q);
+  const all = useQuery<{ libraryCompliance: { checkedTitles: number | null; evaluatedAt: string | null; matching: { titles: number } } }>(ALL_Q);
   const [sel, dispatch] = useReducer(select, NO_SELECTION);
   const [processing, setProcessing] = useState<Processing | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -529,7 +532,9 @@ export function RulesView() {
   const hidden = hiddenCount(sel, rows);
   const headBox = pageState(sel, rows);
   const pickable = rows.filter(canProcess);
-  const empty = emptyState(report, filter);
+  // the check has looked at a title, of the filter's or another
+  const ever = everChecked(report, all.data?.libraryCompliance.checkedTitles, filter);
+  const empty = emptyState(report, filter, ever);
   const counts = checkCounts(all.data?.libraryCompliance.checkedTitles, all.data?.libraryCompliance.matching.titles);
 
   const settings = report.processing;
@@ -727,7 +732,14 @@ export function RulesView() {
   return (
     <section className="kat__rules" aria-labelledby="rules-title">
       {head}
-      <CheckLine report={report} counts={counts} checking={checking} onCheck={() => void checkAgain()} />
+      <CheckLine
+        report={report}
+        ever={ever}
+        checkedAt={report.evaluatedAt ?? all.data?.libraryCompliance.evaluatedAt ?? null}
+        counts={counts}
+        checking={checking}
+        onCheck={() => void checkAgain()}
+      />
       {banners}
 
       {summary.length > 0 && (
@@ -882,14 +894,30 @@ export function RulesView() {
 
 // CheckLine is the check in one line: when it ran, how many titles it
 // checked and how many break a rule, or that it runs, with "check again".
-// Nothing while the titles were never checked: the empty state says it.
-function CheckLine({ report, counts, checking, onCheck }: { report: ComplianceReport; counts: string[]; checking: boolean; onCheck: () => void }) {
-  const state = checkState(report);
+// Nothing while no title was ever checked (ever): the empty state says it.
+// checkedAt: when, of the report's titles, else of every title, while none
+// is of the filter's kind and search.
+function CheckLine({
+  report,
+  ever,
+  checkedAt,
+  counts,
+  checking,
+  onCheck,
+}: {
+  report: ComplianceReport;
+  ever: boolean;
+  checkedAt: string | null;
+  counts: string[];
+  checking: boolean;
+  onCheck: () => void;
+}) {
+  const state = checkState(report, ever);
   if (state === 'never') return null;
   return (
     <div className="kat__checkline">
       {state === 'checking' && <Spinner size={12} />}
-      <Text variant="muted">{state === 'checking' ? 'Checking the titles…' : [`Checked ${fmtTime(report.evaluatedAt)}`, ...counts].join(' · ')}</Text>
+      <Text variant="muted">{state === 'checking' ? 'Checking the titles…' : [`Checked ${fmtTime(checkedAt)}`, ...counts].join(' · ')}</Text>
       <Button variant="ghost" size="sm" leading={<RefreshCw size={14} />} loading={checking} disabled={state === 'checking'} onClick={onCheck}>
         check again
       </Button>
