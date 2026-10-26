@@ -704,13 +704,17 @@ export interface ProcessScope {
   withoutEstimate: number;
 }
 
-/** The scope of processing these rows again. */
+/** The scope of processing these rows again: their packages now and
+ *  estimated after over the same titles, those with an estimate, as the
+ *  report's totals are, and how many have none; one title's package now
+ *  all the same. */
 export function rowsScope(rows: readonly ComplianceRow[]): ProcessScope {
   const estimated = rows.filter((r) => r.estimatedBytes != null && r.estimatedBytes > 0);
+  const now = rows.length === 1 ? rows : estimated;
   return {
     titles: rows.length,
     name: rows.length === 1 ? rowTitle(rows[0]) : null,
-    packageBytes: rows.reduce((sum, r) => sum + (r.packageBytes ?? 0), 0),
+    packageBytes: now.reduce((sum, r) => sum + (r.packageBytes ?? 0), 0),
     estimatedBytes: estimated.length ? estimated.reduce((sum, r) => sum + (r.estimatedBytes ?? 0), 0) : null,
     withoutEstimate: rows.length - estimated.length,
   };

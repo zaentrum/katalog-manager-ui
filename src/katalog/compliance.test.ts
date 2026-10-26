@@ -498,9 +498,14 @@ test('the confirm’s facts, in the UX session’s words: the packages now and a
     { label: 'title', value: 'Vellmar Station (2019)' },
     { label: 'package', value: `78.8${NB}GB now, about 11.9${NB}GB after` },
   ]);
+  // now and after over the same titles, those with an estimate, as the report's totals are
   const two = rowsScope([a, row({ itemId: 'b', packageBytes: 41 * GB, estimatedBytes: null })]);
-  assert.deepEqual(two, { titles: 2, name: null, packageBytes: 100 * GB, estimatedBytes: 12 * GB, withoutEstimate: 1 });
-  assert.deepEqual(confirmFacts(two), [{ label: 'packages', value: `100${NB}GB now, about 12${NB}GB after; 1 title has no estimate` }]);
+  assert.deepEqual(two, { titles: 2, name: null, packageBytes: 59 * GB, estimatedBytes: 12 * GB, withoutEstimate: 1 });
+  assert.deepEqual(confirmFacts(two), [{ label: 'packages', value: `59${NB}GB now, about 12${NB}GB after; 1 title has no estimate` }]);
+  // none with an estimate: no sizes to compare, how many have none
+  assert.deepEqual(confirmFacts(rowsScope([row({ itemId: 'c', estimatedBytes: null }), row({ itemId: 'd', estimatedBytes: null })])), [
+    { label: 'packages', value: '2 titles have no estimate' },
+  ]);
   // every match: the report's totals over all of them the queue would take
   const all = matchingScope({ titles: 248, originalBytes: 9e12, packageBytes: 5.93e12, estimatedBytes: 1.3e12, withoutEstimate: 3, fingerprint: 'x' });
   assert.equal(all.titles, 248);
