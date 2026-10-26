@@ -483,7 +483,8 @@ a.kat__rowlink:focus-visible {
 }
 
 /* the summary: titles and packages by rule, each rule a button that lists
-   its titles alone; the queue in numbers and words */
+   its titles alone; the titles with no estimate, in the confirm's words; the
+   queue in numbers and words */
 .kat__summary {
   display: flex;
   flex-direction: column;
@@ -511,6 +512,7 @@ a.kat__rowlink:focus-visible {
   outline: 2px solid var(--cloud-cyan, #00a4dc);
   outline-offset: 2px;
 }
+.kat__summary-note,
 .kat__queue {
   margin: 0;
   font-family: var(--ff-mono, 'JetBrains Mono', monospace);

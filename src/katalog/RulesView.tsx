@@ -84,6 +84,8 @@ import {
   signedSizeText,
   sizeText,
   staleText,
+  summaryNote,
+  summaryWithoutEstimate,
   titlesOf,
   withRule,
   workerName,
@@ -97,6 +99,7 @@ import {
   type ComplianceRule,
   type ComplianceSort,
   type ComplianceSummary,
+  type ComplianceTotals,
   type ProcessScope,
   type WorkerRules,
 } from './compliance';
@@ -104,7 +107,10 @@ import {
 // katalog-manager answers a page of this many titles at a time.
 const PAGE = 100;
 
-const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $sort: ComplianceSort, $descending: Boolean, $first: Int, $after: String) {
+// everyRule: the summary's titles are every rule's, whatever rules the
+// filter names; while it names some, how many of them have no estimate is
+// read beside the report
+const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], $search: String, $sort: ComplianceSort, $descending: Boolean, $first: Int, $after: String, $everyRule: Boolean!) {
   libraryCompliance(kind: $kind, rules: $rules, search: $search, sort: $sort, descending: $descending, first: $first, after: $after) {
     rules {
       transcoder { worker version reportedAt rules { key label value detail } }
@@ -115,7 +121,7 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     queueable { titles originalBytes packageBytes estimatedBytes withoutEstimate fingerprint }
     queue { queued processing processed failed }
     processing { originals inflight window }
-    summary { rule titles packageBytes estimatedBytes }
+    summary { rule titles packageBytes estimatedBytes withoutEstimate }
     rows {
       itemId title year kind seriesId seriesTitle season episode
       resolution videoCodec videoBitrate videoBitrateEstimated bitrateCap packageAudio originalAudio
@@ -123,6 +129,9 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
       originalBytes packageBytes estimatedBytes outcome queue queueReason queueDetail reworkBlocked evaluatedAt
     }
     nextCursor
+  }
+  everyRule: libraryCompliance(kind: $kind, search: $search, first: 0) @include(if: $everyRule) {
+    matching { withoutEstimate }
   }
 }`;
 // Every title the check looked at and every one that breaks a rule, whatever
@@ -173,6 +182,8 @@ function useReport(filter: ComplianceFilter, order: ComplianceOrder) {
   const key = `${filterKey(filter)}|${order.sort}|${order.descending}`;
   const [report, setReport] = useState<ComplianceReport | null>(null);
   const [rows, setRows] = useState<ComplianceRow[]>([]);
+  // the summary's titles with no estimate, each once
+  const [unestimated, setUnestimated] = useState<number | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState<Reading | null>('first');
@@ -190,8 +201,12 @@ function useReport(filter: ComplianceFilter, order: ComplianceOrder) {
     setLoading(how);
     try {
       const first = how === 'refresh' ? Math.max(PAGE, s.rows.length) : PAGE;
-      const d = await gqlRef.current<{ libraryCompliance: ComplianceReport }>(REPORT_Q, {
+      const d = await gqlRef.current<{
+        libraryCompliance: ComplianceReport;
+        everyRule?: { matching: Pick<ComplianceTotals, 'withoutEstimate'> };
+      }>(REPORT_Q, {
         ...s.vars,
+        everyRule: !!s.vars.rules?.length,
         first,
         after: how === 'more' ? s.cursor : null,
       });
@@ -200,6 +215,7 @@ function useReport(filter: ComplianceFilter, order: ComplianceOrder) {
       s.rows = how === 'more' ? appendRows(s.rows, r.rows) : r.rows;
       s.cursor = r.nextCursor;
       setReport(r);
+      setUnestimated(summaryWithoutEstimate(s.vars.rules, r.matching, d.everyRule?.matching));
       setRows(s.rows);
       setError(null);
       setLoadedAt(Date.now());
@@ -232,7 +248,7 @@ function useReport(filter: ComplianceFilter, order: ComplianceOrder) {
   const poll = useCallback(() => {
     if (!at.current.busy) void read('refresh');
   }, [read]);
-  return { report, rows, error, loadedAt, loading, refresh, more, poll };
+  return { report, rows, unestimated, error, loadedAt, loading, refresh, more, poll };
 }
 
 // useDebounced is value once it has held still for ms: the search asks
@@ -318,7 +334,7 @@ export function RulesView() {
   const filter = useMemo<ComplianceFilter>(() => ({ kind, rules, search }), [kind, rules, search]);
   const key = filterKey(filter);
   const [order, setOrder] = useState<ComplianceOrder>(DEFAULT_ORDER);
-  const { report, rows, error, loadedAt, loading, refresh, more, poll } = useReport(filter, order);
+  const { report, rows, unestimated, error, loadedAt, loading, refresh, more, poll } = useReport(filter, order);
   const all = useQuery<{ libraryCompliance: { checkedTitles: number | null; matching: { titles: number } } }>(ALL_Q);
   const [sel, dispatch] = useReducer(select, NO_SELECTION);
   const [processing, setProcessing] = useState<Processing | null>(null);
@@ -666,6 +682,7 @@ export function RulesView() {
   ];
 
   const parts = queueParts(report.queue);
+  const note = summaryNote(report.summary, unestimated);
   const banners = [
     report.notEvaluated.length ? (
       <Banner key="unchecked" state="warning">
@@ -706,8 +723,19 @@ export function RulesView() {
         <div className="kat__summary">
           <h3 className="kat__h3">by rule</h3>
           <ScrollEdges>
-            <SummaryTable summary={report.summary} rules={rules} onPick={(rule) => setRules(pickRule(rules, rule))} />
+            <SummaryTable
+              summary={report.summary}
+              rules={rules}
+              describedBy={note ? 'rules-summary-note' : undefined}
+              onPick={(rule) => setRules(pickRule(rules, rule))}
+            />
           </ScrollEdges>
+          {/* the titles its packages now and after leave out */}
+          {note && (
+            <p id="rules-summary-note" className="kat__summary-note">
+              {note}
+            </p>
+          )}
           {parts.length > 0 && (
             <p className="kat__queue">
               <span className="kat__queue-label">queue</span>
@@ -903,14 +931,17 @@ function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
 
 // SummaryTable is how many titles break each rule, by its tag, and their
 // packages now and estimated after; a rule lists its titles alone, and again
-// every rule's.
+// every rule's. describedBy: the line under it, of the titles with no
+// estimate.
 function SummaryTable({
   summary,
   rules,
+  describedBy,
   onPick,
 }: {
   summary: ComplianceSummary[];
   rules: ComplianceRule[];
+  describedBy?: string;
   onPick: (rule: ComplianceRule) => void;
 }) {
   const cols: TableColumn<ComplianceSummary>[] = [
@@ -932,7 +963,7 @@ function SummaryTable({
       render: (s) => <span className="kat__num">{sizeText(s.estimatedBytes)}</span>,
     },
   ];
-  return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense aria-label="titles by rule" />;
+  return <Table columns={cols} rows={inRuleOrder(summary)} rowKey={(s) => s.rule} dense aria-label="titles by rule" aria-describedby={describedBy} />;
 }
 
 /** A column of the report's table: its header, the order its header sorts

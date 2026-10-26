@@ -77,11 +77,15 @@ export interface ComplianceRow {
   outcome: ComplianceOutcome | null;
   evaluatedAt: string;
 }
+/** Of the titles of the filter's kind and search, whatever its rules, those
+ *  that break a rule: how many, their packages now and estimated after over
+ *  the same titles, those with an estimate, and how many have none. */
 export interface ComplianceSummary {
   rule: ComplianceRule;
   titles: number;
   packageBytes: number;
   estimatedBytes: number | null;
+  withoutEstimate: number;
 }
 /** The totals over every title that matches the filter, not only a page:
  *  its packages now and estimated after over the same titles, and how many
@@ -264,6 +268,28 @@ export function isOnlyRule(rules: readonly ComplianceRule[], rule: ComplianceRul
  *  every rule again when it was the one shown. */
 export function pickRule(rules: readonly ComplianceRule[], rule: ComplianceRule): ComplianceRule[] {
   return isOnlyRule(rules, rule) ? [] : [rule];
+}
+
+/** How many of the summary's titles have no estimate, each title once
+ *  whatever rules it breaks: the report's own count while the filter (its
+ *  rules) names no rule; while it names some, that of the read beside the
+ *  report of every rule's titles (everyRule), as the summary is; null
+ *  without that read. */
+export function summaryWithoutEstimate(
+  rules: readonly ComplianceRule[] | null | undefined,
+  matching: Pick<ComplianceTotals, 'withoutEstimate'>,
+  everyRule: Pick<ComplianceTotals, 'withoutEstimate'> | null | undefined,
+): number | null {
+  return rules?.length ? (everyRule?.withoutEstimate ?? null) : matching.withoutEstimate;
+}
+
+/** The line under the summary while its packages now and after leave out
+ *  titles with no estimate, in the confirm's words: "3 titles have no
+ *  estimate", of n, the titles counted once (summaryWithoutEstimate); ''
+ *  while no rule's row counts one, or n isn't known. */
+export function summaryNote(summary: readonly ComplianceSummary[], n: number | null | undefined): string {
+  if (n == null || n <= 0 || !summary.some((s) => s.withoutEstimate > 0)) return '';
+  return PROCESS_WORDS.noEstimate(n);
 }
 
 // ---- the rows
@@ -619,7 +645,8 @@ export function processLabel(titles: number): string {
  *    library.originals keeps the original, deletes it once the new version
  *    is complete, or says something the console doesn't know (no word on
  *    the original then);
- *  - noEstimate: what the facts say of the titles with no estimate. */
+ *  - noEstimate: what the facts say of the titles with no estimate, and of
+ *    the one title they name; the summary's line, of its titles. */
 export const PROCESS_WORDS = {
   pace: (inflight: number | null | undefined): string => (inflight != null && inflight >= 1 ? `, ${fmtCount(inflight)} at a time` : ''),
   when: (between: string): string => (between ? `, ${between}` : ''),
@@ -641,7 +668,7 @@ export const PROCESS_WORDS = {
     several: (pace: string, when: string) =>
       `Each title is processed again from its original, with today’s settings${pace}${when}. Its current version keeps playing until the new one is ready.`,
   },
-  noEstimate: (n: number, titles: number): string =>
+  noEstimate: (n: number, titles?: number): string =>
     titles === 1 ? 'no estimate' : `${fmtCount(n)} ${n === 1 ? 'title has' : 'titles have'} no estimate`,
 };
 

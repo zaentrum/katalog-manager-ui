@@ -70,11 +70,14 @@ import {
   PROCESS_WORDS,
   sizeText,
   staleText,
+  summaryNote,
+  summaryWithoutEstimate,
   titlesOf,
   withRule,
   workerName,
   type ComplianceFinding,
   type ComplianceRow,
+  type ComplianceSummary,
   type Selection,
 } from './compliance.ts';
 
@@ -517,6 +520,33 @@ test('the confirm’s facts, in the UX session’s words: the packages now and a
   assert.equal(nowAndAfter(59 * GB, null), `59${NB}GB now`);
   assert.equal(nowAndAfter(null, null), '');
   assert.deepEqual(confirmFacts({ titles: 3, name: null, packageBytes: 0, estimatedBytes: null, withoutEstimate: 0 }), []);
+});
+
+test('under the summary, in the confirm’s words, the titles its packages now and after leave out, each once', () => {
+  const by = (rule: ComplianceSummary['rule'], withoutEstimate: number): ComplianceSummary => ({
+    rule,
+    titles: 12,
+    packageBytes: 59 * GB,
+    estimatedBytes: 12 * GB,
+    withoutEstimate,
+  });
+  // 3 and 2 of the rows, 4 titles: one breaks both rules, and is counted once
+  const summary = [by('NO_SURROUND', 3), by('VIDEO_NOT_HEVC', 2), by('OVER_SIZE_CAP', 0)];
+  assert.equal(summaryWithoutEstimate(null, { withoutEstimate: 4 }, undefined), 4);
+  assert.equal(summaryWithoutEstimate([], { withoutEstimate: 4 }, undefined), 4);
+  assert.equal(summaryNote(summary, 4), '4 titles have no estimate');
+  assert.equal(summaryNote(summary, 1), '1 title has no estimate');
+  assert.equal(summaryNote(summary, 2409), '2,409 titles have no estimate');
+  // a rule picked lists its titles alone, the summary stays every rule's:
+  // the read of every rule's beside the report counts them
+  assert.equal(summaryWithoutEstimate(['VIDEO_NOT_HEVC'], { withoutEstimate: 2 }, { withoutEstimate: 4 }), 4);
+  assert.equal(summaryWithoutEstimate(['VIDEO_NOT_HEVC'], { withoutEstimate: 2 }, undefined), null);
+  assert.equal(summaryNote(summary, null), '');
+  // none left out: no line
+  assert.equal(summaryNote([by('NO_SURROUND', 0), by('VIDEO_NOT_HEVC', 0)], 0), '');
+  assert.equal(summaryNote([by('NO_SURROUND', 0)], 3), '');
+  assert.equal(summaryNote(summary, 0), '');
+  assert.equal(summaryNote([], 0), '');
 });
 
 const result = (r: Partial<Parameters<typeof queuedToasts>[0]>) => ({
