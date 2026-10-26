@@ -54,9 +54,10 @@ first, as against an older one the dialog says the field is unknown.
 
 Catalog management's **Rules** tab is a worklist of the titles that break a
 rule the transcoder or the packager reports (katalog-manager's
-`libraryCompliance`). At the top, each worker's rules as it reported them and
-when, or that it never did, and when the titles were checked, with **check
-again** (`refreshCompliance`); a banner says what the report leaves out. Then
+`libraryCompliance`). At the top, each worker's rules as it reported them, in
+words with the raw config under details, and when, or that it never did, and
+when the titles were checked, with **check again** (`refreshCompliance`); a
+banner says what the report leaves out. Then
 how many titles break each rule, with their packages' size now and at most
 after, in two columns (a rule lists its titles alone), and the re-encode
 queue in numbers: queued, processing, needs attention and processed again.
@@ -65,12 +66,14 @@ The titles follow, movies by default, filtered by kind, rules and a search
 the title's findings and, under them, what processing it again does to it,
 with its package at most after ("Re-encoded, then packaged again, at most
 11.8 GB"); the size of its original and of its package today; and its
-status, a failed one with the queue's reason.
+status with the queue's reason, what the title waits for or why it failed.
+The technical part of a finding or of the queue's reason, a codec's id or a
+tool's output, is under the row's details, never in its lines.
 
 A title is processed again from its row (**process again**), several by
 ticking them, or every title that matches: the header checkbox ticks the
 rows on the screen, and the toolbar then offers to select all that match
-and that the queue doesn't hold already (`queueable`), with their count. A
+and that the queue would take (`queueable`), with their count. A
 filter change keeps the rows ticked and counts those it hides; a selection
 of every match goes with its filter. A title the queue holds, queued or
 processing, can't be ticked. One confirm asks first, the same for one title
@@ -80,20 +83,24 @@ after another; its current version plays until the new one is ready; the
 original isn't changed; and their packages now and at most after, every
 match's from the report's totals. The titles go to the re-encode queue
 with `queueRework`, or every match with `queueReworkMatching` and the
-filter, and a toast counts them, then those the queue held already. Titles
-it didn't take are a warning banner, each with its reason under details
-(`skippedTitles`). A title processed again that follows the rules leaves
-the list and counts as processed again.
+filter. What happened is said in katalog-manager's words: a toast of the
+titles queued (`queuedText`), a plain one of those the queue held already
+(`alreadyText`), and a warning banner of the titles it didn't take, or that
+nothing was queued at all (`notQueuedText`), each title with its reason
+under details (`skippedTitles`). A title processed again that follows the
+rules leaves the list and counts as processed again.
 
 Sizes are written as chino's downloads write them: decimal units, GB with
 one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
 1,000 GB.
 
 It needs a katalog-manager with `libraryCompliance` (with `matching`,
-`queueable`, `queue` and the rows' `queueReason`), `queueRework` and
-`queueReworkMatching` (with `skippedTitles`) and `refreshCompliance`:
-against an older one the tab says that the catalog service on the server
-has no rules check, and the rest of the console works.
+`queueable`, `queue`, the rows' `queueReason` and `queueDetail`, and the
+`detail` of each finding and of each rule), `queueRework` and
+`queueReworkMatching` (with `skippedTitles`, `queuedText`, `alreadyText`
+and `notQueuedText`) and `refreshCompliance`: against an older one the tab
+says that the catalog service on the server has no rules check, and the
+rest of the console works.
 
 ## Track languages
 
