@@ -74,7 +74,7 @@ const finding = {
   surround: () => ({ rule: 'NO_SURROUND', text: 'No 5.1 track in the package; the original has 7.1', measured: '2.0', limit: '5.1' }),
   images: (n) => ({
     rule: 'IMAGE_SUBTITLES_MISSING',
-    text: `${n} image subtitle ${n === 1 ? 'track' : 'tracks'} of the original ${n === 1 ? "isn't" : "aren't"} in the package`,
+    text: `${n} image subtitle ${n === 1 ? 'track' : 'tracks'} of the original ${n === 1 ? 'isn’t' : 'aren’t'} in the package`,
     measured: `0 of ${n}`,
     limit: `${n} of ${n}`,
   }),
@@ -170,11 +170,23 @@ function episodes() {
   return rows;
 }
 
-const library = [...movies(), ...episodes()].map((r) => ({ ...r, evaluatedAt }));
-// a few titles in the queue already
+const library = [...movies(), ...episodes()].map((r) => ({ ...r, queueReason: null, evaluatedAt }));
+// a few titles in the queue already; one whose processing failed, and why
 for (const [i, q] of [[3, 'sent'], [5, 'queued'], [8, 'queued'], [12, 'queued'], [20, 'failed'], [31, 'done'], [240, 'sent']]) {
   if (library[i]) library[i].queue = q;
 }
+library[20].queueReason = 'the transcoder couldn’t read the original';
+// a few movies whose original is gone: the queue doesn't take them (the
+// second biggest package among them, so the list shows one at the top)
+const byPackage = library.filter((r) => r.kind === 'MOVIE' && r.packageBytes).sort((a, b) => b.packageBytes - a.packageBytes);
+for (const i of [1, 6, 15]) byPackage[i].noFile = 'its original was deleted after packaging';
+byPackage[1].queue = null;
+
+// a title as the server names it in its answers
+const nameOf = (r) =>
+  r.kind === 'EPISODE'
+    ? `${r.seriesTitle} · S${String(r.season).padStart(2, '0')}E${String(r.episode).padStart(2, '0')} · ${r.title}`
+    : `${r.title} (${r.year})`;
 
 const transcoderRules = new Set(['OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'VIDEO_NOT_HEVC']);
 
@@ -207,7 +219,7 @@ function compliance(vars, scenario) {
     transcoder: scenario === 'unreported' ? null : { ...TRANSCODER, reportedAt: reportedAt.transcoder },
     packager: { ...PACKAGER, reportedAt: reportedAt.packager },
   };
-  const notEvaluated = scenario === 'unreported' ? ["The transcoder hasn't reported its rules, so its caps aren't checked."] : [];
+  const notEvaluated = scenario === 'unreported' ? ['The transcoder hasn’t reported its rules, so its caps aren’t checked.'] : [];
   const titles = asked(vars, scenario);
   const summary = [];
   for (const rule of ['NOT_PACKAGED', 'PACKAGING_FAILED', 'OVER_BITRATE_CAP', 'OVER_SIZE_CAP', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING', 'VIDEO_NOT_HEVC']) {
@@ -224,20 +236,25 @@ function compliance(vars, scenario) {
   const matching = matchingOf(titles, vars);
   const offset = vars.after ? Number(String(vars.after).replace(/^o:/, '')) || 0 : 0;
   const first = Math.min(Math.max(vars.first ?? 100, 1), 500);
-  const estimated = matching.filter((r) => r.estimatedBytes != null);
+  const totals = (rows) => {
+    const estimated = rows.filter((r) => r.estimatedBytes != null);
+    return {
+      titles: rows.length,
+      originalBytes: rows.reduce((s, r) => s + r.originalBytes, 0),
+      packageBytes: rows.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
+      estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
+    };
+  };
   return {
     rules,
     notEvaluated,
     evaluatedAt: scenario === 'never' ? null : evaluatedAt,
     evaluating,
     total: matching.length,
-    // the totals over every title that matches, not only the page
-    matching: {
-      titles: matching.length,
-      originalBytes: matching.reduce((s, r) => s + r.originalBytes, 0),
-      packageBytes: matching.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
-      estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
-    },
+    // the totals over every title that matches, not only the page, and over
+    // those of them the queue doesn't hold
+    matching: totals(matching),
+    queueable: totals(matching.filter((r) => !inQueue(r))),
     queue: queueCounts(),
     summary,
     rows: matching.slice(offset, offset + first),
@@ -253,22 +270,28 @@ function queueCounts() {
   return { queued: count('queued'), processing: count('sent'), processed: PROCESSED_BEFORE + count('done'), failed: count('failed') };
 }
 
+const inQueue = (r) => r.queue === 'queued' || r.queue === 'sent';
+
 // queueRework and queueReworkMatching: a title waiting or sent stays as it
-// is; one not in the library is skipped
-function enqueue(rows, unknown = 0) {
+// is; one whose original is gone, or that isn't in the library, is skipped
+// with its reason
+function enqueue(rows, unknown = []) {
   let queued = 0;
   let already = 0;
+  const skippedTitles = unknown.map((itemId) => ({ itemId, title: itemId, reason: 'it isn’t in the catalog' }));
   for (const r of rows) {
-    if (r.queue === 'queued' || r.queue === 'sent') already++;
+    if (inQueue(r)) already++;
+    else if (r.noFile) skippedTitles.push({ itemId: r.itemId, title: nameOf(r), reason: r.noFile });
     else {
       r.queue = 'queued';
+      r.queueReason = null;
       queued++;
     }
   }
   const parts = [`${queued} queued`];
   if (already) parts.push(`${already} in the queue already`);
-  if (unknown) parts.push(`${unknown} skipped: not in the catalog`);
-  return { queued, alreadyQueued: already, skipped: unknown, message: parts.join(' · ') };
+  if (skippedTitles.length) parts.push(`${skippedTitles.length} skipped`);
+  return { queued, alreadyQueued: already, skipped: skippedTitles.length, skippedTitles, message: parts.join(' · ') };
 }
 
 const setting = (id, key, valueText, valueType, description) => ({
@@ -298,14 +321,15 @@ function reencodeQueue() {
 function answer(query, vars, scenario) {
   const data = {};
   if (/\bqueueReworkMatching\s*\(/.test(query)) {
-    const ids = new Set(matchingOf(asked(vars, scenario), vars).map((r) => r.itemId));
+    // exactly the matches the queue doesn't hold (queueable)
+    const ids = new Set(matchingOf(asked(vars, scenario), vars).filter((r) => !inQueue(r)).map((r) => r.itemId));
     data.queueReworkMatching = enqueue(library.filter((r) => ids.has(r.itemId)));
     return { data };
   }
   if (/\bqueueRework\s*\(/.test(query)) {
     const items = vars.items ?? [];
     const rows = library.filter((r) => items.includes(r.itemId));
-    data.queueRework = enqueue(rows, items.length - rows.length);
+    data.queueRework = enqueue(rows, items.filter((id) => !rows.some((r) => r.itemId === id)));
     return { data };
   }
   if (/\brefreshCompliance\b/.test(query)) {
