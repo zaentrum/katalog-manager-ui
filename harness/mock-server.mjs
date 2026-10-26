@@ -456,6 +456,7 @@ function compliance(vars, scenario) {
       packageBytes: rows.reduce((s, r) => s + (r.packageBytes ?? 0), 0),
       estimatedBytes: estimated.length ? estimated.reduce((s, r) => s + r.estimatedBytes, 0) : null,
       withoutEstimate: rows.length - estimated.length,
+      fingerprint: fingerprintOf(rows),
     };
   };
   return {
@@ -471,11 +472,12 @@ function compliance(vars, scenario) {
     matching: totals(matching),
     queueable: totals(matching.filter(queueable)),
     queue: queueCounts(),
-    // how the queue processes titles, as the settings say
+    // how the queue processes titles, as the settings say; the window with
+    // the stand-in's zone, which the console reads in the viewer's
     processing: {
       originals: scenario === 'delete' ? 'delete-after-package' : 'keep',
       inflight: Number(settingOf('library.reencode.inflight')) || null,
-      window: settingOf('library.reencode.window'),
+      window: zoned(settingOf('library.reencode.window')),
     },
     summary,
     rows: matching.slice(offset, offset + first),
@@ -547,6 +549,18 @@ const SETTINGS = [
   setting('4', 'tmdb.api_key', null, 'string', null),
 ];
 const settingOf = (key) => SETTINGS.find((x) => x.key === key)?.valueText ?? null;
+// the stand-in's clock is an hour east of UTC: its window, with that zone
+const zoned = (w) => (w ? w.replace(/(\d{1,2}:\d{2})/g, '$1+01:00') : null);
+// a set of titles, as a request for every match names it back: a hash of
+// its ids (FNV-1a)
+function fingerprintOf(rows) {
+  let h = 0x811c9dc5;
+  for (const c of rows.map((r) => r.itemId).sort().join(',')) {
+    h ^= c.charCodeAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
 const POLICY = { available: true, automatic: true, reason: null, maxAttempts: 3, backoffSeconds: 60, backoffMaxSeconds: 3600, intervalSeconds: 30 };
 
 function reencodeQueue() {
@@ -565,11 +579,18 @@ function reencodeQueue() {
 function answer(query, vars, scenario) {
   const data = {};
   if (/\bqueueReworkMatching\s*\(/.test(query)) {
-    // exactly the matches queueable sums up, and none when they are another
-    // number than the console named (expected)
-    const ids = new Set(matchingOf(asked(vars, scenario), vars).filter(queueable).map((r) => r.itemId));
-    if (vars.expected != null && vars.expected !== ids.size) {
-      const changed = `Nothing was queued: the matching titles changed from ${fmt(vars.expected)} to ${fmt(ids.size)}.`;
+    // exactly the matches queueable sums up, and none when they are other
+    // titles than the console named: another number (expected), or as many
+    // and others (fingerprint)
+    const matches = matchingOf(asked(vars, scenario), vars).filter(queueable);
+    const ids = new Set(matches.map((r) => r.itemId));
+    const changed =
+      vars.expected != null && vars.expected !== ids.size
+        ? `Nothing was queued: the matching titles changed, from ${fmt(vars.expected)} to ${fmt(ids.size)}.`
+        : vars.fingerprint != null && vars.fingerprint !== fingerprintOf(matches)
+          ? 'Nothing was queued: the matching titles changed.'
+          : null;
+    if (changed) {
       data.queueReworkMatching = { queued: 0, alreadyQueued: 0, skipped: 0, skippedTitles: [], message: changed,
         queuedText: null, alreadyText: null, notQueuedText: changed };
       return { data };
