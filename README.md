@@ -63,8 +63,13 @@ now and the check's estimate of it after, over those with an estimate ("≈
 after"; a rule lists its titles alone), and under them how many have none,
 each title once whatever rules it breaks ("3 titles have no estimate"); and
 the re-encode queue in numbers: queued, processing, needs attention and
-processed again. Then each worker's rules as it reported them, in words
-with the raw config under details, and when, or that it never did.
+processed again. A rule the check can't hold the titles against yet
+(`evaluated`), while the worker whose rule it is hasn't reported, is left
+out of the summary, where its 0 would read as none broken, and out of the
+rules filter, a tick of it too; the banner says why, and the rule comes
+back with its count once the worker reports. Then each worker's rules as it
+reported them, in words with the raw config under details, and when, or
+that it never did.
 
 The titles follow, movies by default, filtered by kind, rules and a search
 ("230 of 279" while something filters), a hundred at a time, a row each with
@@ -131,14 +136,14 @@ one decimal and no trailing zero ("1.4 GB"), MB below 1 GB, and TB from
 
 It needs a katalog-manager with `libraryCompliance` (with `sort` and
 `descending`, `checkedTitles`, `matching`, `queueable` and `summary` with
-`withoutEstimate` (and the queueable set's `fingerprint`), `queue`,
-`processing`, the rows' measures, `outcome`, `queueReason`, `queueDetail`
-and `reworkBlocked`, and the `detail` of each finding and of each rule), its
-`compliance.csv`, `queueRework` and `queueReworkMatching` (with `expected`
-and `fingerprint`, `skippedTitles`, `queuedText`, `alreadyText` and
-`notQueuedText`) and `refreshCompliance`: against an older one the tab says
-that the catalog service on the server has no rules check, and the rest of
-the console works.
+`withoutEstimate` (and the queueable set's `fingerprint`, the summary's
+`evaluated`), `queue`, `processing`, the rows' measures, `outcome`,
+`queueReason`, `queueDetail` and `reworkBlocked`, and the `detail` of each
+finding and of each rule), its `compliance.csv`, `queueRework` and
+`queueReworkMatching` (with `expected` and `fingerprint`, `skippedTitles`,
+`queuedText`, `alreadyText` and `notQueuedText`) and `refreshCompliance`:
+against an older one the tab says that the catalog service on the server
+has no rules check, and the rest of the console works.
 
 ## Track languages
 
@@ -193,10 +198,11 @@ npx vite --config harness/vite.config.ts  # the console on :8794 (HARNESS_PORT)
 http://localhost:8794/katalog-manage/rules is the rules tab; `?mock=` plays
 its other states: `empty` (every title follows the rules), `never` (never
 checked), `checking`, `unreported` (the transcoder never reported its
-rules), `old` (a katalog-manager without the report), `down` (it answers
-502) and `delete` (originals deleted once their new version is complete).
-The stand-in keeps what is queued in memory; restart it for the seeded
-state.
+rules), `unreported-packager` (the packager never did), `unreported-both`
+(neither did), `old` (a katalog-manager without the report), `down` (it
+answers 502) and `delete` (originals deleted once their new version is
+complete). The stand-in keeps what is queued in memory; restart it for the
+seeded state.
 
 ## Container
 
