@@ -2,7 +2,7 @@
 
 Standalone **catalog-management console** for the zaentrum platform — the admin UI
 that talks to [`katalog-manager`](https://github.com/zaentrum/katalog-manager) over
-GraphQL. Catalog, scan, processing and settings, built on `@nalet/design-system`.
+GraphQL. Catalog, scan, processing, rules and settings, built on `@nalet/design-system`.
 
 It is a service in its own right so it can be released independently of the
 catalog **API**. It is launched from the [zaentrum portal](https://github.com/zaentrum/zaentrum-portal)
@@ -50,6 +50,37 @@ whose transcode or package is running is left alone, and the dialog stays
 open saying why. It needs a katalog-manager with `reencodeItem`: deploy that
 first, as against an older one the dialog says the field is unknown.
 
+## Rules
+
+Catalog management's **Rules** tab is the titles that break the rules the
+pipeline's workers report (katalog-manager's `libraryCompliance`): each
+worker's rules as it reported them and when, or that it never did, and what
+the report could not check; when the titles were checked, and **check
+again** (`refreshCompliance`); how many titles break each rule, with their
+packages' size now and at most after (a rule lists its titles alone); and
+the titles, movies by default, filtered by type, rules and a search, the
+biggest package first, a page at a time. Each row has the title's findings,
+the size of its original and of its package, its package at most after, and
+its place in the re-encode queue.
+
+A title is reworked from its row, several by ticking them, or every title
+that matches: the header checkbox ticks the rows shown, then offers every
+match. A rework asks first, the same for one title and many: how many, their
+sizes now and at most after (those of every match counted a page at a time
+when more match than are shown), that they go through the re-encode queue at
+its own pace (its settings `library.reencode.rate`, `.inflight` and
+`.window` and the sweep's interval, as far as they are set; what the queue
+holds and why it sends none now), and what plays meanwhile, as Re-encode
+says. The titles are queued with `queueRework`, or every match with
+`queueReworkMatching` and the filter, and the tab says how many were queued,
+queued already and skipped. A title the queue holds already is neither
+ticked nor reworked again. A change of the filter clears the selection.
+
+It needs a katalog-manager with `libraryCompliance`, `queueRework`,
+`queueReworkMatching` and `refreshCompliance`: against an older one the tab
+says the catalog does not check its rules yet, and the rest of the console
+works.
+
 ## Track languages
 
 The page of a movie or an episode has **Tracks**: the audio and subtitle
@@ -88,6 +119,23 @@ npm run dev          # proxies /api → http://localhost:8080 (a running katalog
 npm run build        # tsc -b && vite build
 npm test             # unit tests of the pure helpers (node --test; Node 22.18+ runs .ts as is)
 ```
+
+The harness runs the console as catalog management in a browser with no
+cluster, no Keycloak and no katalog-manager: a stand-in for katalog-manager's
+GraphQL with made-up titles, and a stub of `react-oidc-context` that signs an
+administrator in. The build never reads it.
+
+```sh
+node harness/mock-server.mjs &            # the stand-in on :8793 (MOCK_PORT)
+npx vite --config harness/vite.config.ts  # the console on :8794 (HARNESS_PORT)
+```
+
+http://localhost:8794/katalog-manage/rules is the rules tab; `?mock=` plays
+its other states: `empty` (every title follows the rules), `never` (never
+checked), `checking`, `unreported` (the transcoder never reported its
+rules), `unset` (none of the queue's settings set), `old` (a katalog-manager
+without the report) and `down` (it answers 502). The stand-in keeps what is
+queued in memory; restart it for the seeded state.
 
 ## Container
 
