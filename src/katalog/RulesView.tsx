@@ -29,7 +29,6 @@ import {
   DEFAULT_ORDER,
   KIND_OPTIONS,
   NO_SELECTION,
-  RULE_ORDER,
   announceText,
   appendRows,
   ariaSort,
@@ -38,6 +37,8 @@ import {
   canProcess,
   checkCounts,
   checkState,
+  checkedRules,
+  checkedSummary,
   confirmBody,
   confirmFacts,
   countText,
@@ -57,6 +58,7 @@ import {
   isFiltering,
   isOnlyRule,
   isSelected,
+  keepChecked,
   loadFailure,
   matchingScope,
   nextOrder,
@@ -121,7 +123,7 @@ const REPORT_Q = `query Rules($kind: ComplianceKind, $rules: [ComplianceRule!], 
     queueable { titles originalBytes packageBytes estimatedBytes withoutEstimate fingerprint }
     queue { queued processing processed failed }
     processing { originals inflight window }
-    summary { rule titles packageBytes estimatedBytes withoutEstimate }
+    summary { rule titles packageBytes estimatedBytes withoutEstimate evaluated }
     rows {
       itemId title year kind seriesId seriesTitle season episode
       resolution videoCodec videoBitrate videoBitrateEstimated bitrateCap packageAudio originalAudio
@@ -373,6 +375,14 @@ export function RulesView() {
     const t = setInterval(poll, every);
     return () => clearInterval(t);
   }, [every, poll]);
+
+  // the rules the check holds the titles against: the summary and the filter
+  // offer no other, and a rule ticked that it no longer holds them against
+  // leaves the filter
+  const checked = useMemo(() => checkedRules(report?.summary), [report?.summary]);
+  useEffect(() => {
+    setRules((rs) => keepChecked(rs, checked));
+  }, [checked]);
 
   // a check that has run since: the counts of the check's line again
   const refetchAll = all.refetch;
@@ -682,7 +692,8 @@ export function RulesView() {
   ];
 
   const parts = queueParts(report.queue);
-  const note = summaryNote(report.summary, unestimated);
+  const summary = checkedSummary(report.summary);
+  const note = summaryNote(summary, unestimated);
   const banners = [
     report.notEvaluated.length ? (
       <Banner key="unchecked" state="warning">
@@ -719,12 +730,12 @@ export function RulesView() {
       <CheckLine report={report} counts={counts} checking={checking} onCheck={() => void checkAgain()} />
       {banners}
 
-      {report.summary.length > 0 && (
+      {summary.length > 0 && (
         <div className="kat__summary">
           <h3 className="kat__h3">by rule</h3>
           <ScrollEdges>
             <SummaryTable
-              summary={report.summary}
+              summary={summary}
               rules={rules}
               describedBy={note ? 'rules-summary-note' : undefined}
               onPick={(rule) => setRules(pickRule(rules, rule))}
@@ -790,7 +801,7 @@ export function RulesView() {
           <fieldset className="kat__rulepick">
             <legend>rules</legend>
             <div className="kat__rulepick-list">
-              {RULE_ORDER.map((rule) => (
+              {checked.map((rule) => (
                 <Checkbox
                   key={rule}
                   label={<span className="kat__mono">{ruleTag(rule)}</span>}
@@ -929,10 +940,10 @@ function WorkerBlock({ slot, w }: { slot: string; w: WorkerRules | null }) {
   );
 }
 
-// SummaryTable is how many titles break each rule, by its tag, and their
-// packages now and estimated after; a rule lists its titles alone, and again
-// every rule's. describedBy: the line under it, of the titles with no
-// estimate.
+// SummaryTable is how many titles break each rule the check holds them
+// against (checkedSummary), by its tag, and their packages now and estimated
+// after; a rule lists its titles alone, and again every rule's. describedBy:
+// the line under it, of the titles with no estimate.
 function SummaryTable({
   summary,
   rules,

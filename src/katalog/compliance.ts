@@ -79,13 +79,16 @@ export interface ComplianceRow {
 }
 /** Of the titles of the filter's kind and search, whatever its rules, those
  *  that break a rule: how many, their packages now and estimated after over
- *  the same titles, those with an estimate, and how many have none. */
+ *  the same titles, those with an estimate, and how many have none; and
+ *  whether the check holds the titles against the rule at all (evaluated:
+ *  false while the worker whose rule it is hasn't reported, its counts 0). */
 export interface ComplianceSummary {
   rule: ComplianceRule;
   titles: number;
   packageBytes: number;
   estimatedBytes: number | null;
   withoutEstimate: number;
+  evaluated: boolean;
 }
 /** The totals over every title that matches the filter, not only a page:
  *  its packages now and estimated after over the same titles, and how many
@@ -290,6 +293,28 @@ export function summaryWithoutEstimate(
 export function summaryNote(summary: readonly ComplianceSummary[], n: number | null | undefined): string {
   if (n == null || n <= 0 || !summary.some((s) => s.withoutEstimate > 0)) return '';
   return PROCESS_WORDS.noEstimate(n);
+}
+
+/** The summary's rules the check holds the titles against: a rule it can't
+ *  check yet (evaluated: false, while its worker hasn't reported, as the
+ *  banner says) is left out, as its 0 would read as checked and none broken;
+ *  it comes back with its count once the worker reports. */
+export function checkedSummary(summary: readonly ComplianceSummary[]): ComplianceSummary[] {
+  return summary.filter((s) => s.evaluated);
+}
+
+/** The rules the filter offers, in the tab's order: every rule but those the
+ *  summary says the check can't hold the titles against yet. */
+export function checkedRules(summary: readonly ComplianceSummary[] | null | undefined): ComplianceRule[] {
+  const off = new Set((summary ?? []).filter((s) => !s.evaluated).map((s) => s.rule));
+  return RULE_ORDER.filter((rule) => !off.has(rule));
+}
+
+/** The rules ticked, less those the filter no longer offers (checkedRules):
+ *  the same array while it offers them all, so nothing is read again. */
+export function keepChecked(rules: ComplianceRule[], checked: readonly ComplianceRule[]): ComplianceRule[] {
+  const kept = rules.filter((r) => checked.includes(r));
+  return kept.length === rules.length ? rules : kept;
 }
 
 // ---- the rows

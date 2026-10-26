@@ -15,6 +15,8 @@ import {
   canProcess,
   checkCounts,
   checkState,
+  checkedRules,
+  checkedSummary,
   confirmBody,
   confirmFacts,
   countText,
@@ -36,6 +38,7 @@ import {
   isFiltering,
   isOnlyRule,
   isSelected,
+  keepChecked,
   loadFailure,
   matchingScope,
   nextOrder,
@@ -77,6 +80,7 @@ import {
   workerName,
   type ComplianceFinding,
   type ComplianceRow,
+  type ComplianceRule,
   type ComplianceSummary,
   type Selection,
 } from './compliance.ts';
@@ -182,6 +186,46 @@ test('a rule is ticked and unticked; the summary picks one alone, and the same a
   assert.deepEqual(pickRule(['OVER_SIZE_CAP'], 'OVER_SIZE_CAP'), []);
   assert.equal(isOnlyRule(['OVER_SIZE_CAP'], 'OVER_SIZE_CAP'), true);
   assert.equal(isOnlyRule(['OVER_SIZE_CAP', 'NO_SURROUND'], 'OVER_SIZE_CAP'), false);
+});
+
+test('a rule the check can’t hold the titles against yet is in neither the summary nor the filter, until its worker reports', () => {
+  const by = (rule: ComplianceRule, titles: number, evaluated: boolean): ComplianceSummary => ({
+    rule,
+    titles,
+    packageBytes: titles ? 59 * GB : 0,
+    estimatedBytes: titles ? 12 * GB : null,
+    withoutEstimate: 0,
+    evaluated,
+  });
+  // neither worker has reported: the packaging's rules alone, whose 0 is
+  // checked and none broken
+  const neither = [
+    by('NOT_PACKAGED', 9, true),
+    by('PACKAGING_FAILED', 0, true),
+    by('OVER_BITRATE_CAP', 0, false),
+    by('OVER_SIZE_CAP', 0, false),
+    by('NO_SURROUND', 0, false),
+    by('IMAGE_SUBTITLES_MISSING', 0, false),
+    by('VIDEO_NOT_HEVC', 0, false),
+  ];
+  assert.deepEqual(checkedSummary(neither), [by('NOT_PACKAGED', 9, true), by('PACKAGING_FAILED', 0, true)]);
+  assert.deepEqual(checkedRules(neither), ['NOT_PACKAGED', 'PACKAGING_FAILED']);
+  // the packager has, the transcoder not yet: its rules come back
+  const packager = neither.map((s) => (s.rule === 'NO_SURROUND' || s.rule === 'IMAGE_SUBTITLES_MISSING' ? { ...s, titles: 50, evaluated: true } : s));
+  assert.deepEqual(checkedRules(packager), ['NOT_PACKAGED', 'PACKAGING_FAILED', 'NO_SURROUND', 'IMAGE_SUBTITLES_MISSING']);
+  // both have: every rule with its count, in the tab's order
+  const both = neither.map((s) => ({ ...s, evaluated: true }));
+  assert.deepEqual(checkedSummary(both), both);
+  assert.deepEqual(checkedRules(both), RULE_ORDER);
+  // before the first report, and of a rule the summary doesn't name: offered
+  assert.deepEqual(checkedRules(null), RULE_ORDER);
+  assert.deepEqual(checkedRules([by('NOT_PACKAGED', 9, true)]), RULE_ORDER);
+  // a rule ticked leaves the filter once it isn't offered; while all are,
+  // the same array, so nothing is read again
+  const ticked: ComplianceRule[] = ['OVER_BITRATE_CAP', 'NO_SURROUND'];
+  assert.deepEqual(keepChecked(ticked, checkedRules(packager)), ['NO_SURROUND']);
+  assert.deepEqual(keepChecked(ticked, checkedRules(neither)), []);
+  assert.equal(keepChecked(ticked, checkedRules(both)), ticked);
 });
 
 test('a movie reads with its year, an episode with its series and place, the table’s column without the episode’s title', () => {
@@ -529,6 +573,7 @@ test('under the summary, in the confirm’s words, the titles its packages now a
     packageBytes: 59 * GB,
     estimatedBytes: 12 * GB,
     withoutEstimate,
+    evaluated: true,
   });
   // 3 and 2 of the rows, 4 titles: one breaks both rules, and is counted once
   const summary = [by('NO_SURROUND', 3), by('VIDEO_NOT_HEVC', 2), by('OVER_SIZE_CAP', 0)];
