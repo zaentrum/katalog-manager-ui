@@ -31,13 +31,16 @@ what it has on disk as katalog-manager records it, after its year: whether
 it has an original (`hasOriginal`), and the sizes of its originals and of
 its package (`originalBytes`, `packageBytes`, as katalog-manager reads them
 for the page at once), written as the rules tab writes sizes, "—" for none.
-A title whose original was retired has its package alone; an episode
-another's file covers has an original while its holder has one, and no
-sizes of its own; a series has none. **has original** (all, yes, no) is
-katalog-manager's filter (`items(hasOriginal:)`), of every item and not of
-the page. The list has no order by size: katalog-manager's `items` lists
-the newest first and orders by nothing else (the rules tab's report sorts
-its titles by their sizes).
+Whether it has an original reads "yes" or "no", and "—" for a series, a
+season or an album, which have no file of their own. A title whose
+original was retired has its package alone; an episode another's file
+covers has an original while its holder has one, and no sizes of its own.
+**has original** (all, yes, no) is katalog-manager's filter
+(`items(hasOriginal:)`), of every item and not of the page: "no" lists the
+titles whose original is gone, or that have no file, and never a series, a
+season or an album. The list has no order by size: katalog-manager's
+`items` lists the newest first and orders by nothing else (the rules tab's
+report sorts its titles by their sizes).
 
 These need a katalog-manager with `hasOriginal`, `originalBytes` and
 `packageBytes` and `items(hasOriginal:)`: against an older one the list reads
