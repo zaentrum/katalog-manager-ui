@@ -23,6 +23,26 @@ Secret settings (the enrichment providers' API keys, and any setting whose
 key names a credential) are write-only: the settings tab shows whether each is
 set, and sets or clears it, but never shows a value.
 
+## The catalog
+
+The catalog's list is the newest 200 items its filters keep (type, genre,
+year, a search of the title, and whether it has an original), each with
+what it has on disk as katalog-manager records it, after its year: whether
+it has an original (`hasOriginal`), and the sizes of its originals and of
+its package (`originalBytes`, `packageBytes`, as katalog-manager reads them
+for the page at once), written as the rules tab writes sizes, "—" for none.
+A title whose original was retired has its package alone; an episode
+another's file covers has an original while its holder has one, and no
+sizes of its own; a series has none. **has original** (all, yes, no) is
+katalog-manager's filter (`items(hasOriginal:)`), of every item and not of
+the page. The list has no order by size: katalog-manager's `items` lists
+the newest first and orders by nothing else (the rules tab's report sorts
+its titles by their sizes).
+
+These need a katalog-manager with `hasOriginal`, `originalBytes` and
+`packageBytes` and `items(hasOriginal:)`: against an older one the list reads
+without them, and shows neither the columns nor the filter.
+
 ## Processing
 
 Catalog management's **Processing** tab is what the pipeline holds: every step
@@ -192,11 +212,11 @@ npm run build        # tsc -b && vite build
 npm test             # unit tests of the pure helpers (node --test; Node 22.18+ runs .ts as is)
 ```
 
-The harness runs the console as catalog management in a browser with no
-cluster, no Keycloak and no katalog-manager: a stand-in for katalog-manager's
-GraphQL and the report's CSV with made-up titles, and a stub of
-`react-oidc-context` that signs an administrator in. The build never reads
-it.
+The harness runs the console as catalog management, or as the catalog with
+`HARNESS_BASE=/katalog/`, in a browser with no cluster, no Keycloak and no
+katalog-manager: a stand-in for katalog-manager's GraphQL and the report's
+CSV with made-up titles, and a stub of `react-oidc-context` that signs an
+administrator in. The build never reads it.
 
 ```sh
 node harness/mock-server.mjs &            # the stand-in on :8793 (MOCK_PORT)
@@ -210,7 +230,9 @@ rules), `unreported-packager` (the packager never did), `unreported-both`
 (neither did), `old` (a katalog-manager without the report), `down` (it
 answers 502) and `delete` (originals deleted once their new version is
 complete). The stand-in keeps what is queued in memory; restart it for the
-seeded state.
+seeded state. With `HARNESS_BASE=/katalog/`, http://localhost:8794/katalog/
+is the catalog's list, its items with what each has on disk; `?mock=old` is
+a katalog-manager without them too.
 
 ## Container
 
