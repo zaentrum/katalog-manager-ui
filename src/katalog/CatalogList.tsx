@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Badge, Button, Input, Select, Field, Spinner, Text } from '@nalet/design-system';
 import type { TableColumn } from '@nalet/design-system';
 import { Search, Trash2 } from 'lucide-react';
@@ -6,6 +6,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useArtwork, useSeen } from '../lib/artwork';
 import { useQuery } from '../lib/useQuery';
 import { useCatalogStream, debounced } from '../lib/stream';
+import { HAS_ORIGINAL_OPTIONS, LIST_Q, LIST_Q_UNSIZED, listVariables, withoutSizes } from './catalog';
+import { sizeText } from './compliance';
 import { noticeFrom, type DeletionNotice } from './deletion';
 import { statusTone } from './status';
 
@@ -17,15 +19,44 @@ interface Item {
   posterUrl: string | null;
   isPackaged: boolean;
   overallStatus: { overallStatus: string | null } | null;
+  // what it has on disk, from a katalog-manager that says it (LIST_Q)
+  hasOriginal?: boolean;
+  originalBytes?: number | null;
+  packageBytes?: number | null;
 }
 
-const LIST_Q = `query Catalog($type: String, $genre: String, $year: Int, $search: String) {
-  items(type: $type, genre: $genre, year: $year, search: $search, limit: 200) {
-    id type title year posterUrl isPackaged overallStatus { overallStatus }
-  }
-}`;
-
 const GENRES_Q = `{ genres { name } }`;
+
+// What each item has on disk, after its year: whether it has an original,
+// badged as the packaged column badges its state, and the sizes of its
+// originals and of its package as the rules tab writes sizes, numbers to the
+// right in figures of one width, '—' for none.
+const sizeColumns: TableColumn<Item>[] = [
+  {
+    key: 'hasOriginal',
+    header: 'has original',
+    render: (r) =>
+      r.hasOriginal ? (
+        <Badge tone="green" dot>
+          yes
+        </Badge>
+      ) : (
+        <Badge tone="neutral">—</Badge>
+      ),
+  },
+  {
+    key: 'originalBytes',
+    header: 'original',
+    align: 'right',
+    render: (r) => <span className="kat__num">{sizeText(r.originalBytes)}</span>,
+  },
+  {
+    key: 'packageBytes',
+    header: 'package',
+    align: 'right',
+    render: (r) => <span className="kat__num">{sizeText(r.packageBytes)}</span>,
+  },
+];
 
 export function CatalogList() {
   const nav = useNavigate();
@@ -36,14 +67,27 @@ export function CatalogList() {
   const [type, setType] = useState('');
   const [genre, setGenre] = useState('');
   const [year, setYear] = useState('');
+  const [hasOriginal, setHasOriginal] = useState('');
+  // A katalog-manager older than the sizes refuses a list that asks for
+  // them: from then on the list is read without them, and shows neither
+  // their columns nor their filter.
+  const [unsized, setUnsized] = useState(false);
+  const sized = !unsized;
 
-  const vars = {
-    search: search || null,
-    type: type || null,
-    genre: genre || null,
-    year: year ? parseInt(year, 10) : null,
-  };
-  const { data, loading, error, refetch } = useQuery<{ items: Item[] }>(LIST_Q, vars, [search, type, genre, year]);
+  const vars = listVariables({ search, type, genre, year, hasOriginal }, sized);
+  const { data, loading, error, refetch } = useQuery<{ items: Item[] }>(sized ? LIST_Q : LIST_Q_UNSIZED, vars, [
+    search,
+    type,
+    genre,
+    year,
+    hasOriginal,
+  ]);
+  // the refusal is no error to show, also when it comes after the switch:
+  // the answer to a read begun before it (two in flight)
+  const refused = withoutSizes(error);
+  useEffect(() => {
+    if (refused) setUnsized(true);
+  }, [refused]);
   // Live refresh: new/updated items appear without a manual reload (debounced —
   // one refetch per pipeline burst).
   const refresh = useMemo(() => debounced(refetch, 1200), [refetch]);
@@ -64,6 +108,7 @@ export function CatalogList() {
     },
     { key: 'type', header: 'type', render: (r) => <span className="kat__mono">{r.type}</span> },
     { key: 'year', header: 'year', align: 'right', render: (r) => r.year ?? '—' },
+    ...(sized ? sizeColumns : []),
     {
       key: 'isPackaged',
       header: 'packaged',
@@ -129,12 +174,19 @@ export function CatalogList() {
         <Field label="year">
           <Input type="number" placeholder="any" value={year} onChange={(e) => setYear(e.target.value)} />
         </Field>
+        {sized && (
+          <Field label="has original">
+            <Select value={hasOriginal} onChange={(e) => setHasOriginal(e.target.value)} options={HAS_ORIGINAL_OPTIONS} />
+          </Field>
+        )}
         <div className="kat__spacer" />
-        {!loading && data && <Text variant="dim">{data.items.length} items</Text>}
+        <div className="kat__filter-end">
+          {!loading && data && <Text variant="dim">{data.items.length} items</Text>}
+        </div>
       </div>
 
-      {error && <div className="kat__err">error: {error}</div>}
-      {loading && !data ? (
+      {error && !refused && <div className="kat__err">error: {error}</div>}
+      {(loading || refused) && !data ? (
         <div className="kat__state">
           <Spinner /> <Text variant="muted">loading catalog…</Text>
         </div>
