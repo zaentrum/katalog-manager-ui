@@ -366,7 +366,8 @@ for (const r of library) {
 // series' first covers, after it, each with what it has on disk. A title
 // whose original was deleted after packaging has its package alone; the
 // covered episode has no sizes of its own, and an original while its holder
-// has one; a series has neither.
+// has one; a series has no file of its own, and nothing said of one (null),
+// which the has-original filter, either way, leaves out.
 const statusOf = (r) =>
   r.findings.some((f) => f.rule === 'PACKAGING_FAILED') ? 'failed' : r.packageBytes ? 'completed' : 'pending';
 const itemOf = (r) => {
@@ -378,7 +379,7 @@ const itemOf = (r) => {
 const [holder, ...episodeItems] = library.filter((r) => r.kind === 'EPISODE').map(itemOf);
 const catalog = [
   ...SERIES.map((s, i) => ({ id: s.id, type: 'series', title: s.title, year: 2014 + 3 * i, isPackaged: true, status: 'completed',
-    hasOriginal: false, originalBytes: null, packageBytes: null })),
+    hasOriginal: null, originalBytes: null, packageBytes: null })),
   holder,
   { id: `${holder.id}x`, type: 'episode', title: `${holder.title}, Part Two`, year: null, isPackaged: false, status: 'completed',
     hasOriginal: holder.hasOriginal, originalBytes: null, packageBytes: null },
