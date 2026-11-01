@@ -1,7 +1,8 @@
 // Stands in for katalog-manager's GraphQL, as much of it as the rules tab
-// reads: the report of the titles that break the pipeline's rules, the
-// re-encode queue they are reworked through, and the settings and sweep the
-// queue's pace is read from. Every title is made up: this repo is public.
+// and the catalog's list read: the report of the titles that break the
+// pipeline's rules, the re-encode queue they are reworked through, and the
+// settings and sweep the queue's pace is read from; and the catalog's items
+// with what each has on disk. Every title is made up: this repo is public.
 //
 // The page's ?mock= picks the state it answers from (a cookie the dev proxy
 // passes on):
@@ -12,7 +13,7 @@
 //   unreported  the transcoder never reported its rules: its caps are not checked
 //   unreported-packager  the packager never reported: surround and image subtitles are not checked
 //   unreported-both      neither worker reported
-//   old         a katalog-manager without the report: graph-gophers' validation errors
+//   old         a katalog-manager without the report, nor the list's sizes: graph-gophers' validation errors
 //   down        katalog-manager answers 502
 //   delete      library.originals deletes an original once its new version is complete
 // GET /api/manage/compliance.csv answers the same report as a CSV. It keeps
@@ -360,6 +361,52 @@ for (const r of library) {
   if (r.blocked) r.estimatedBytes = null;
 }
 
+// The catalog's items as katalog-manager lists them: the series, their
+// episodes and the movies of the report, and an episode the file of the
+// series' first covers, after it, each with what it has on disk. A title
+// whose original was deleted after packaging has its package alone; the
+// covered episode has no sizes of its own, and an original while its holder
+// has one; a series has neither.
+const statusOf = (r) =>
+  r.findings.some((f) => f.rule === 'PACKAGING_FAILED') ? 'failed' : r.packageBytes ? 'completed' : 'pending';
+const itemOf = (r) => {
+  const retired = r.blocked === 'deleted';
+  return { id: r.itemId, type: r.kind === 'MOVIE' ? 'movie' : 'episode', title: r.title, year: r.year,
+    isPackaged: !!r.packageBytes && r.videoCodec === 'HEVC', status: statusOf(r), hasOriginal: !retired,
+    originalBytes: retired ? null : Math.round(r.originalBytes), packageBytes: r.packageBytes ? Math.round(r.packageBytes) : null };
+};
+const [holder, ...episodeItems] = library.filter((r) => r.kind === 'EPISODE').map(itemOf);
+const catalog = [
+  ...SERIES.map((s, i) => ({ id: s.id, type: 'series', title: s.title, year: 2014 + 3 * i, isPackaged: true, status: 'completed',
+    hasOriginal: false, originalBytes: null, packageBytes: null })),
+  holder,
+  { id: `${holder.id}x`, type: 'episode', title: `${holder.title}, Part Two`, year: null, isPackaged: false, status: 'completed',
+    hasOriginal: holder.hasOriginal, originalBytes: null, packageBytes: null },
+  ...episodeItems,
+  ...library.filter((r) => r.kind === 'MOVIE').map(itemOf),
+];
+
+// items(type, genre, year, search, hasOriginal, limit): the fields the
+// query asks for what each has on disk, none where it doesn't
+function itemsOf(query, vars) {
+  const search = (vars.search ?? '').trim().toLowerCase();
+  const sized = /\boriginalBytes\b/.test(query);
+  return catalog
+    .filter((r) => !vars.type || r.type === vars.type)
+    // the stand-in's titles have no genre
+    .filter(() => !vars.genre)
+    .filter((r) => vars.year == null || r.year === vars.year)
+    .filter((r) => !search || r.title.toLowerCase().includes(search))
+    .filter((r) => vars.hasOriginal == null || r.hasOriginal === vars.hasOriginal)
+    .slice(0, 200)
+    .map(({ status, hasOriginal, originalBytes, packageBytes, ...r }) => ({
+      ...r,
+      posterUrl: null,
+      overallStatus: { overallStatus: status },
+      ...(sized ? { hasOriginal, originalBytes, packageBytes } : {}),
+    }));
+}
+
 // a title as the server names it in its answers
 const nameOf = (r) =>
   r.kind === 'EPISODE'
@@ -657,6 +704,20 @@ function answer(query, vars, scenario) {
     // titles, the summary's
     if (vars.everyRule) data.everyRule = compliance({ ...vars, rules: null, first: 0 }, scenario);
   }
+  if (/\bitems\s*\(/.test(query)) {
+    if (scenario === 'old' && /\b(hasOriginal|originalBytes|packageBytes)\b/.test(query)) {
+      return {
+        errors: [
+          { message: 'Unknown argument "hasOriginal" on field "Query.items".', locations: [{ line: 2, column: 62 }] },
+          { message: 'Cannot query field "hasOriginal" on type "Item".', locations: [{ line: 3, column: 75 }] },
+          { message: 'Cannot query field "originalBytes" on type "Item".', locations: [{ line: 3, column: 87 }] },
+          { message: 'Cannot query field "packageBytes" on type "Item". Did you mean "isPackaged"?', locations: [{ line: 3, column: 101 }] },
+        ],
+      };
+    }
+    data.items = itemsOf(query, vars);
+  }
+  if (/\bgenres\b/.test(query)) data.genres = [];
   if (/\bsettings\b/.test(query)) data.settings = SETTINGS;
   if (/\bretryPolicy\b/.test(query)) data.retryPolicy = POLICY;
   if (/\bprocessingOverview\b/.test(query)) {
