@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useAuth } from 'react-oidc-context';
+import { errorText } from './errors';
 
 // GraphQL endpoint of the katalog-manager service. Behind the demo's path-routing
 // the service is published under /api/manage, and the Go service also mounts the
@@ -16,9 +17,10 @@ export interface GraphQLError {
   message: string;
 }
 
+// Its message is errorText's: every message once, the first few of them.
 class GqlError extends Error {
   constructor(public errors: GraphQLError[]) {
-    super(errors.map((e) => e.message).join('; '));
+    super(errorText(errors.map((e) => e.message)));
     this.name = 'GqlError';
   }
 }
