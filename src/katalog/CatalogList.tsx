@@ -19,8 +19,9 @@ interface Item {
   posterUrl: string | null;
   isPackaged: boolean;
   overallStatus: { overallStatus: string | null } | null;
-  // what it has on disk, from a katalog-manager that says it (LIST_Q)
-  hasOriginal?: boolean;
+  // what it has on disk, from a katalog-manager that says it (LIST_Q);
+  // hasOriginal null of a series, a season or an album
+  hasOriginal?: boolean | null;
   originalBytes?: number | null;
   packageBytes?: number | null;
 }
@@ -28,20 +29,23 @@ interface Item {
 const GENRES_Q = `{ genres { name } }`;
 
 // What each item has on disk, after its year: whether it has an original,
-// badged as the packaged column badges its state, and the sizes of its
-// originals and of its package as the rules tab writes sizes, numbers to the
-// right in figures of one width, '—' for none.
+// badged as the packaged column badges its state, a word either way, '—'
+// only where katalog-manager says nothing (a series, a season, an album),
+// and the sizes of its originals and of its package as the rules tab writes
+// sizes, numbers to the right in figures of one width, '—' for none.
 const sizeColumns: TableColumn<Item>[] = [
   {
     key: 'hasOriginal',
     header: 'has original',
     render: (r) =>
-      r.hasOriginal ? (
+      r.hasOriginal == null ? (
+        '—'
+      ) : r.hasOriginal ? (
         <Badge tone="green" dot>
           yes
         </Badge>
       ) : (
-        <Badge tone="neutral">—</Badge>
+        <Badge tone="neutral">no</Badge>
       ),
   },
   {
@@ -82,8 +86,7 @@ export function CatalogList() {
     year,
     hasOriginal,
   ]);
-  // the refusal is no error to show, also when it comes after the switch:
-  // the answer to a read begun before it (two in flight)
+  // the refusal is no error to show: the list reads again without them
   const refused = withoutSizes(error);
   useEffect(() => {
     if (refused) setUnsized(true);
